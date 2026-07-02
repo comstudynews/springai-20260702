@@ -1,0 +1,27 @@
+server:
+  address: 0.0.0.0
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: spring-ai-tutorial
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY}
+      chat:
+        options:
+          model: ${OPENAI_MODEL:gpt-5.4-mini}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+app:
+  cors:
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173}
