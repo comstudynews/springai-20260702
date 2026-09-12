@@ -2,6 +2,8 @@
 
 > 본 문서는 「[인공지능] Spring AI Tool 호출 및 MCP Server 개발」 과정안내서와 수업 흐름을 바탕으로 재구성한 학습 교재입니다.  
 > 원 수업의 핵심 순서인 **Tool Calling → STDIO MCP Server → WebMVC/WebFlux 기반 MCP → 파일 시스템 → 인터넷 검색 → 비전 Tool**을 유지하되, 초보자가 개념과 코드의 연결 관계를 이해할 수 있도록 학습 순서를 세분화했습니다.
+>
+> **검토 기준:** 과정안내서의 수업 구성은 그대로 보존하고, 기술 설명은 2026-09-12 기준 Spring AI 공식 문서(2.0.1)를 함께 확인해 보완했습니다. 특히 원 수업의 SSE 예제는 학습 대상으로 유지하되, 현재 Spring AI 2.0 계열에서는 SSE transport가 deprecated이며 새 프로젝트에는 Streamable HTTP 사용이 권장된다는 점을 별도로 표시했습니다.
 
 ---
 
@@ -36,7 +38,7 @@
 |---|---:|---|
 | Tool Calling | 2시간 | 애플리케이션 내부 Tool 정의 및 호출 |
 | STDIO 통신 MCP Server 개발 | 5시간 | 애플리케이션과 연결되는 MCP Server 외부 Tool 정의 및 호출 |
-| Web 기반 MCP Server 개발 | 5시간 | 독립 실행 MCP Server와 외부 Tool 정의 및 호출 |
+| SSE 통신 MCP Server 개발 | 5시간 | 독립 실행 MCP Server와 외부 Tool 정의 및 호출 |
 | 합계 | 12시간 | 이론 + 실습 |
 
 ---
@@ -214,21 +216,39 @@ LLM은 Tool 이름만 보는 것이 아니라 Tool 설명을 이용해 어떤 �
 
 ## 2.3 Tool 파라미터 이해
 
-Tool이 입력값을 받는 경우 LLM은 입력 파라미터의 의미도 알아야 합니다.
+Tool이 입력값을 받는 경우 LLM은 각 파라미터의 의미와 필수 여부도 알아야 합니다. Spring AI에서는 `@ToolParam`을 사용해 파라미터 설명을 명확하게 전달할 수 있습니다.
 
-개념적으로 다음과 같은 구조가 만들어집니다.
+```java
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 
-```json
-{
-  "name": "search",
-  "description": "최신 인터넷 정보를 검색합니다.",
-  "parameters": {
-    "query": "검색할 질문"
-  }
+public class SearchTools {
+
+    @Tool(description = "사용자의 질문에 최신 인터넷 정보가 필요한 경우 웹을 검색합니다.")
+    public String search(
+            @ToolParam(description = "검색할 질문") String query) {
+        // 실제 검색 API 호출
+        return "...";
+    }
 }
 ```
 
-LLM은 이 정보를 보고 Tool 이름과 파라미터를 결정합니다.
+Spring AI는 메서드의 파라미터 정보를 바탕으로 LLM에 전달할 JSON Schema를 생성합니다. 개념적으로는 다음과 같은 구조입니다.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "검색할 질문"
+    }
+  },
+  "required": ["query"]
+}
+```
+
+LLM은 Tool 이름과 설명, 입력 JSON Schema를 함께 보고 어떤 Tool을 어떤 인자로 호출할지 결정합니다. Spring AI에서 Tool 파라미터는 기본적으로 필수이며, 선택 항목이 필요하면 `@ToolParam(required = false)` 등으로 명시합니다.
 
 ---
 
@@ -361,7 +381,9 @@ MCP를 처음 접하면 프로토콜, Client, Server, STDIO, SSE 같은 용어 �
 
 핵심은 단순합니다.
 
-> MCP는 AI 애플리케이션이 외부 기능을 일정한 방식으로 발견하고 호출하도록 연결하는 구조이다.
+> MCP는 AI 애플리케이션이 외부 기능을 일정한 방식으로 발견하고 호출하도록 연결하는 프로토콜이다.
+
+MCP는 Client/Server 구조를 사용하며 메시지 교환은 JSON-RPC 기반으로 이루어집니다. 초보 단계에서는 먼저 **Host → MCP Client → MCP Server → Tool**의 역할 구분을 이해하는 것이 중요합니다.
 
 ---
 
@@ -435,7 +457,7 @@ MCP Tool 호출은 다음 흐름으로 이해하면 됩니다.
 
 STDIO는 Standard Input/Output의 약자로 표준 입력과 표준 출력을 뜻합니다.
 
-MCP Client와 MCP Server가 같은 컴퓨터에서 별도 프로세스로 실행되면서 표준 입출력을 이용해 메시지를 주고받을 수 있습니다.
+STDIO 방식에서는 MCP Client와 MCP Server가 표준 입력(stdin)과 표준 출력(stdout)을 이용해 메시지를 주고받습니다. 일반적인 로컬 구성에서는 Host 애플리케이션이 MCP Server 프로세스를 실행하거나 이미 준비된 로컬 프로세스와 연결합니다. 핵심은 네트워크 포트가 아니라 표준 입출력 스트림을 통신 채널로 사용한다는 점입니다.
 
 ```text
 Spring AI Application
@@ -455,8 +477,8 @@ STDIO는 네트워크 서버 설정 없이 MCP의 Client/Server 구조를 이해
 
 학습자는 먼저 다음 내용을 확인할 수 있습니다.
 
-- MCP Server가 별도의 실행 프로그램이라는 점
-- MCP Client가 Server를 실행하거나 연결할 수 있다는 점
+- MCP Client와 MCP Server의 역할이 분리된다는 점
+- 로컬 구성에서 Client가 Server 프로세스를 실행하거나 연결할 수 있다는 점
 - Tool 목록을 Server에서 가져올 수 있다는 점
 - Tool 실행 결과가 다시 Client로 전달된다는 점
 
@@ -513,16 +535,47 @@ MCP Server
 
 ---
 
-## 6.2 원 수업에서 다루는 Web 방식
+## 6.2 원 수업의 SSE와 현재 권장 방식
 
-과정안내서에서는 다음 두 가지 Spring 기반 구현을 다룹니다.
+과정안내서에서는 다음 두 가지 Spring 기반 SSE 구현을 다룹니다.
 
-1. WebMVC 기반 MCP Server
-2. WebFlux 기반 MCP Server
+1. WebMVC 기반 SSE MCP Server
+2. WebFlux 기반 SSE MCP Server
 
-원 수업에서는 SSE 통신 방식으로 설명됩니다.
+이 내용은 **원 수업의 학습 흐름**이므로 그대로 이해할 필요가 있습니다. 다만 2026-09-12 기준 Spring AI 2.0.1 공식 문서에서는 SSE transport가 2.0.0부터 deprecated로 표시되어 있으며, 새 프로젝트에는 **Streamable HTTP** 사용을 권장합니다.
 
-본 교재에서는 먼저 **Client와 Server가 네트워크로 분리된다**는 구조를 이해하는 데 초점을 둡니다. 전송 프로토콜의 세부 구현은 실제 프로젝트의 Spring AI 버전과 수업 소스에 맞춰 확인합니다.
+따라서 교재에서는 다음과 같이 구분합니다.
+
+| 구분 | 학습 목적 |
+|---|---|
+| SSE | 수업 소스 이해 및 기존 MCP 전송 방식 학습 |
+| Streamable HTTP | 현재 Spring AI 2.0 계열에서 권장되는 HTTP 전송 방식 |
+| Stateless | 세션 상태를 유지하지 않는 단순한 배포 구조가 필요한 경우 |
+
+핵심 개념은 같습니다. 먼저 **Client와 Server가 네트워크로 분리된다**는 구조를 이해하고, 그 다음 전송 방식의 차이를 구분합니다.
+
+---
+
+## 6.3 Spring AI 2.0 계열의 Streamable HTTP
+
+WebMVC 기반 MCP Server에서는 다음 starter를 사용할 수 있습니다.
+
+```xml
+<dependency>
+    <groupId>org.springframework.ai</groupId>
+    <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+</dependency>
+```
+
+Streamable HTTP를 사용할 때 서버 설정의 핵심은 다음과 같습니다.
+
+```properties
+spring.ai.mcp.server.protocol=STREAMABLE
+```
+
+WebFlux를 사용하는 경우에는 WebFlux용 MCP Server starter를 사용합니다.
+
+> **주의:** 수업 소스가 SSE를 기준으로 작성되어 있다면 실습 중에는 강의 소스의 설정을 우선합니다. 교재의 Streamable HTTP 설명은 현재 기술 흐름을 이해하기 위한 보완 내용입니다.
 
 ---
 
@@ -685,7 +738,7 @@ LLM
 환경변수 사용 예:
 
 ```properties
-SEARCH_API_KEY=${SEARCH_API_KEY}
+app.search.api-key=${SEARCH_API_KEY}
 ```
 
 API Key를 GitHub 저장소에 직접 커밋하지 않습니다.
@@ -783,7 +836,7 @@ flowchart TD
 
 단일 Tool 호출은 비교적 단순합니다.
 
-그러나 하나의 목표를 해결하기 위해 여러 Tool을 순서대로 선택하고 실행하기 시작하면 Agentic Workflow와 연결됩니다.
+그러나 하나의 목표를 해결하기 위해 모델이 상황을 판단하고 여러 Tool을 선택·반복 실행하도록 구성하면 Agentic Workflow로 확장할 수 있습니다. 단순히 Tool을 여러 개 등록했다고 해서 자동으로 Agent가 되는 것은 아닙니다.
 
 ```text
 단일 질문
@@ -819,7 +872,25 @@ spring.ai.openai.api-key=${OPENAI_API_KEY}
 
 ---
 
-## 12.2 위험도가 높은 Tool은 별도로 관리한다
+## 12.2 HTTP 기반 MCP Server의 인증·인가
+
+Spring AI의 HTTP 기반 MCP Server starter는 MCP endpoint에 인증·인가를 자동으로 적용하지 않습니다. 기본 상태로 외부 네트워크에 노출하면 접근 가능한 Client가 등록된 Tool, Resource, Prompt를 조회하거나 호출할 수 있습니다.
+
+따라서 localhost를 넘어 배포할 때는 Spring Security 등의 보안 계층을 별도로 적용해야 합니다.
+
+```text
+외부 Client
+    ↓
+인증 / 인가
+    ↓
+MCP Endpoint
+    ↓
+Tool 실행
+```
+
+---
+
+## 12.3 위험도가 높은 Tool은 별도로 관리한다
 
 다음 Tool은 단순 조회 Tool보다 위험합니다.
 
@@ -834,7 +905,7 @@ spring.ai.openai.api-key=${OPENAI_API_KEY}
 
 ---
 
-## 12.3 Tool 입력값 검증
+## 12.4 Tool 입력값 검증
 
 LLM이 생성한 인자를 그대로 신뢰해서는 안 됩니다.
 
@@ -850,7 +921,7 @@ LLM이 생성한 Tool Argument
 
 ---
 
-## 12.4 로그 관리
+## 12.5 로그 관리
 
 운영 환경에서는 다음 정보를 기록하는 것이 좋습니다.
 
@@ -1032,6 +1103,9 @@ java -version
 - JDK 버전
 - Maven 또는 Maven Wrapper 사용 가능 여부
 - Spring Boot 프로젝트 실행 여부
+- 프로젝트의 Spring AI 버전
+- MCP 전송 방식(STDIO / SSE / STREAMABLE / STATELESS)
+- 수업 소스와 공식 문서의 버전 차이 여부
 
 ## OpenAI API Key
 
@@ -1068,6 +1142,21 @@ API Key는 GitHub 저장소에 직접 저장하지 않습니다.
 
 ---
 
+## 검토 반영 사항
+
+이번 검토에서 다음 내용을 수정·보완했습니다.
+
+1. 과정안내서의 단원명을 임의로 바꾸지 않고 `SSE 통신 MCP Server 개발`로 원문에 맞췄습니다.
+2. Tool 파라미터 설명을 실제 Spring AI의 `@ToolParam`과 JSON Schema 구조에 맞게 수정했습니다.
+3. STDIO를 무조건 "별도 프로세스"라고 단정하지 않고, 표준 입출력 기반 통신이라는 핵심 개념으로 바로잡았습니다.
+4. 원 수업의 SSE는 유지하되 Spring AI 2.0 계열에서 SSE가 deprecated임을 명시하고 Streamable HTTP를 현재 권장 방식으로 추가했습니다.
+5. 검색 API Key 예시를 실제 Spring 설정에서 사용할 수 있는 property placeholder 형태로 수정했습니다.
+6. HTTP 기반 MCP Server는 기본 인증·인가가 제공되지 않는다는 보안 주의사항을 추가했습니다.
+7. 여러 Tool을 등록하는 것과 Agentic Workflow를 동일시하지 않도록 설명을 보완했습니다.
+8. 실제 압축파일의 프로젝트 코드와 아직 1:1 검증되지 않은 부분을 명확히 표시했습니다.
+
+---
+
 ## 마무리
 
 이 교재에서 가장 중요한 것은 개별 annotation이나 설정값을 외우는 것이 아닙니다.
@@ -1099,3 +1188,12 @@ LLM의 최종 응답
 - 교육시간: 12시간
 - 선수지식: Spring Boot 애플리케이션 개발, Spring AI 기초
 - 원 수업의 세부 예제 코드는 저장소에 프로젝트 단위로 단계적으로 정리할 예정입니다.
+- 현재 README의 Java 코드는 개념 설명용 예제이며, 업로드된 압축파일 내부 프로젝트와 1:1로 대조된 최종 실행 코드는 아닙니다.
+- 실제 실습 프로젝트를 저장소에 추가할 때는 각 프로젝트의 `pom.xml`, Spring AI 버전, MCP transport 설정을 기준으로 다시 검증합니다.
+
+### 기술 검토 참고 문서
+
+- Spring AI Tool Calling: https://docs.spring.io/spring-ai/reference/api/tools.html
+- Spring AI MCP Overview: https://docs.spring.io/spring-ai/reference/api/mcp/mcp-overview.html
+- Spring AI MCP Server Boot Starter: https://docs.spring.io/spring-ai/reference/api/mcp/mcp-server-boot-starter-docs.html
+- Spring AI Streamable HTTP MCP Server: https://docs.spring.io/spring-ai/reference/api/mcp/mcp-streamable-http-server-boot-starter-docs.html
