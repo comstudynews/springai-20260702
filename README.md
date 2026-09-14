@@ -132,6 +132,12 @@ Tool Calling을 이해한 뒤 MCP를 배우는 이유는 MCP도 결국 LLM이 �
 
 ## 1.5 Chat에서 Agent로 확장되는 흐름
 
+<p align="center">
+  <img src="docs/images/spring-ai-agent-loop.png" alt="Spring AI Agent Loop" width="420">
+</p>
+
+> 단순한 텍스트 응답을 넘어 LLM이 Tool을 사용하고 결과를 다시 판단하는 반복 구조를 보여줍니다. 제11장 Tool Calling과 이후 Agent 학습이 어떻게 연결되는지 먼저 큰 흐름으로 확인할 수 있습니다.
+
 ```text
 일반 Chat
    ↓
@@ -215,6 +221,12 @@ public class DateTimeTools {
 ---
 
 ## 2.3 DateTimeService에서 Tool을 LLM에 연결한다
+
+<p align="center">
+  <img src="docs/images/spring-ai-tool-calling-advisor-flow.png" alt="Spring AI Tool Calling Advisor Flow" width="900">
+</p>
+
+> 실제 `DateTimeService`의 `.tools(dateTimeTools)`가 전체 Tool Calling 루프 안에서 어디에 위치하는지 보여주는 그림입니다. 질문 → 모델의 Tool 선택 → Tool 실행 → Tool 결과 → 최종 응답의 흐름을 코드와 함께 비교해서 보세요.
 
 실제 `DateTimeService`의 핵심은 다음입니다.
 
@@ -549,6 +561,12 @@ http://localhost:8080/tool-search
 
 # 제4장. 내부 Tool에서 MCP Tool로 넘어가기
 
+<p align="center">
+  <img src="docs/images/mcp-stack.svg" alt="MCP Stack Architecture" width="760">
+</p>
+
+> MCP를 Client/Server, Session, Transport의 세 계층으로 나누어 보여주는 구조도입니다. 이 교재에서 STDIO와 Streamable HTTP를 비교할 때는 주로 가장 아래 Transport 계층이 달라진다고 이해하면 됩니다.
+
 ## 4.1 핵심 차이
 
 제11장:
@@ -583,6 +601,21 @@ public String getCurrentDateTime() { ... }
 ---
 
 ## 4.3 ToolCallbackProvider
+
+<table>
+<tr>
+<td width="50%" align="center">
+<img src="docs/images/java-mcp-client-architecture.jpg" alt="Java MCP Client Architecture" width="100%"><br>
+<sub>MCP Client 구조</sub>
+</td>
+<td width="50%" align="center">
+<img src="docs/images/java-mcp-server-architecture.jpg" alt="Java MCP Server Architecture" width="100%"><br>
+<sub>MCP Server 구조</sub>
+</td>
+</tr>
+</table>
+
+> 왼쪽은 Host 측 MCP Client, 오른쪽은 외부 기능을 제공하는 MCP Server 구조입니다. 현재 소스에서는 Host가 `ToolCallbackProvider`를 통해 MCP Server의 Tool을 받아 `ChatClient`에 연결합니다.
 
 STDIO Host와 WebMVC Host의 `AiService`는 다음 구조를 사용합니다.
 
@@ -1475,3 +1508,15 @@ Agent
 - PGVector 스크립트: `docker/pgvector/pgvector.ps1`
 - STDIO 설정: `projects-spring-ai-2.0/ch12-stdio-mcp-host/src/main/resources/mcp-servers.json`
 - 본 README는 현재 `main` 브랜치의 `build.gradle`, `application.properties`, Java 소스를 기준으로 정리했습니다.
+
+
+---
+
+## 이미지 자료 출처
+
+README에 삽입한 Tool Calling 및 MCP 구조 이미지는 Spring AI 공식 문서 저장소에서 가져왔습니다.
+
+- Spring AI 공식 저장소: https://github.com/spring-projects/spring-ai
+- 이미지 보관 위치: `docs/images/`
+- 이미지별 정리: `docs/images/README.md`
+- 라이선스: Apache License 2.0
