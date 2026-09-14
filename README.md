@@ -520,19 +520,7 @@ http://localhost:8080/boom-barrier-tools
 
 `FileSystemTools`는 디렉터리 조회, 생성, 파일 생성, 읽기, 삭제, 이동/이름변경 기능을 제공합니다.
 
-기준 디렉터리:
-
-```java
-Path home = Paths.get(System.getProperty("user.home"));
-this.rootDirectory =
-    home.resolve("Documents/ch11-tool-calling");
-```
-
-따라서 실제 파일 작업 범위는 다음입니다.
-
-```text
-~/Documents/ch11-tool-calling
-```
+파일 작업의 기준 디렉터리는 `~/Documents/ch11-tool-calling`입니다. 경로 제한과 파일 조작 구현은 제8장에서 자세히 봅니다.
 
 `FileSystemService`는 `MessageChatMemoryAdvisor`를 사용하고 Controller의 HTTP Session ID를 대화 ID로 넘깁니다.
 
@@ -566,11 +554,9 @@ http://localhost:8080/file-system-tools
 ④ 파일 내용 읽기  
 ⑤ 파일 이름 변경
 
-### 현재 소스 주의점
+### 최종 배포본의 경로 안전 처리
 
-`resolve(String relativePath)`는 빈 값일 때 rootDirectory를 대입한 뒤 다시 `rootDirectory.resolve(relativePath)`를 수행합니다. `relativePath`가 실제 `null`로 들어오면 예외가 발생할 수 있습니다.
-
-따라서 실습에서는 가능하면 `.`, 파일명, 디렉터리명처럼 경로를 명시적으로 주는 것이 안전합니다.
+최종 배포본에서는 빈 경로를 실습용 루트 디렉터리로 처리하고, `..` 등을 이용해 루트 밖으로 벗어나는 경로는 거부하도록 보완했습니다. 파일 생성 시 파일명과 확장명에 경로 구분자를 포함할 수 없으며, 실습용 루트 디렉터리 자체를 삭제하는 것도 차단합니다.
 
 ---
 
@@ -1038,19 +1024,9 @@ fetch(url)
 
 # 제10장. 실제 Vision + Tool Calling 분석
 
-## 10.1 Boom Barrier 흐름
+## 10.1 Vision 입력에서 Tool 실행까지
 
-```text
-이미지
- ↓
-차량 번호 인식
- ↓
-CarCheckTools.checkCarNumber()
- ↓
-등록 여부
- ├─ true  → boomBarrierUp()
- └─ false → boomBarrierDown()
-```
+제3장 3.5에서 전체 업무 흐름을 확인했으므로 여기서는 **이미지 입력이 Tool 판단으로 연결되는 부분**에 집중합니다.
 
 학습 포인트:
 
@@ -1178,6 +1154,15 @@ Boom Barrier와 Heating System은 실습용 로직이지만 구조상 실제 장
 
 현재 `fetch(url)`은 전달된 URL을 직접 요청합니다. 운영 환경에서는 허용 도메인, 내부 주소 접근, 응답 크기, 타임아웃 등을 별도로 제한하는 것이 안전합니다.
 
+
+## 12.5 HTTP MCP Server를 외부에 공개할 때
+
+현재 실습은 localhost에서 실행하는 것을 전제로 합니다. Spring AI의 HTTP 기반 MCP Server starter는 MCP endpoint에 인증·인가를 자동으로 적용하지 않습니다. 따라서 8081 포트를 외부 네트워크에 그대로 공개하면 접근 가능한 Client가 등록된 Tool, Resource, Prompt를 호출할 수 있습니다.
+
+실습 범위를 넘어 배포할 때는 Spring Security 등의 인증·인가 계층을 추가하고, MCP endpoint를 허용된 사용자와 네트워크에만 공개해야 합니다.
+
+> 이 주의사항은 HTTP 기반 WebMVC/WebFlux MCP에 해당합니다. STDIO 예제는 네트워크 endpoint를 열지 않습니다.
+
 ---
 
 # 제13장. 실제 소스 기준 권장 학습 순서
@@ -1212,7 +1197,7 @@ ch09-vector-store-chat-memory
 ch10-rag
 ```
 
-이 구간부터 PostgreSQL/PGVector가 필요합니다.
+이 단계부터 DB를 사용하는 예제가 등장합니다. `ch09-in-memory-chat-memory`는 DB가 필요하지 않지만, `ch08-embedding-vector-store`, `ch09-jdbc-chat-memory`, `ch09-vector-store-chat-memory`, `ch10-rag`는 PostgreSQL 또는 PGVector를 사용합니다.
 
 ---
 
@@ -1640,58 +1625,18 @@ ASYNC WebFlux
 
 ---
 
-# 부록 B. 실제 소스 분석에서 확인한 중요 사항
+# 부록 B. 최종 배포 시 알아둘 예외 사항
 
-① 현재 WebMVC/WebFlux MCP는 `STREAMABLE` 설정입니다.  
-② ch11 직접 Internet Search 예제는 Bean 애노테이션이 주석 처리되어 있습니다.  
-③ Exception Handling의 커스텀 Processor `@Bean`도 주석 처리되어 있습니다.  
-④ Tool Search는 basic에서 regex, 전체 버전에서 vector 설정을 사용합니다.  
-⑤ Tool Search용 VectorStore는 `spring_ai_tool_search_vector_store`, 3072차원입니다.  
-⑥ STDIO Host의 `mcp-servers.json`은 Windows 절대 경로를 포함합니다.  
-⑦ WebFlux Host는 `boundedElastic`을 사용합니다.  
-⑧ Annotation MCP는 Logging, Resource, Prompt, Progress, Sampling, Elicitation, Tool Changed를 포함합니다.
+- `ch11-tool-calling`의 직접 Internet Search 클래스는 Bean 애노테이션이 주석 처리되어 있어 기본 실행 대상이 아닙니다. 인터넷 검색 실습은 제12장 MCP Server 버전을 사용합니다.
+- Exception Handling의 커스텀 `ToolExecutionExceptionProcessor` Bean은 의도적으로 주석 처리되어 있어, 예외 처리 방식을 비교하며 활성화하는 실습용 코드입니다.
+- STDIO Host의 `mcp-servers.json`에는 Windows 절대 경로가 들어 있으므로 clone 위치나 운영체제가 다르면 JAR 경로를 수정해야 합니다.
+- HTTP 기반 MCP 예제는 교육용 localhost 실행을 전제로 하며, 외부 배포 시 별도의 인증·인가가 필요합니다.
 
 ---
 
 ## 마무리
 
-```text
-ChatClient 기초
-   ↓
-내부 @Tool
-   ↓
-ToolParam / ToolContext
-   ↓
-여러 Tool 조합
-   ↓
-File / Vision
-   ↓
-Tool Search
-   ↓
-@McpTool
-   ↓
-STDIO MCP
-   ↓
-WebMVC Streamable HTTP
-   ↓
-WebFlux ASYNC
-   ↓
-MCP Resource / Prompt / Sampling / Elicitation
-   ↓
-Agent
-```
-
-앞 단계와 다음 단계에서 **무엇이 달라졌는지 비교하면서 진행하는 것**이 이 저장소를 가장 효율적으로 학습하는 방법입니다.
-
----
-
-## 참고
-
-- 실제 실행 소스: `projects-spring-ai-2.0`
-- PGVector 스크립트: `docker/pgvector/pgvector.ps1`
-- STDIO 설정: `projects-spring-ai-2.0/ch12-stdio-mcp-host/src/main/resources/mcp-servers.json`
-- 본 README는 현재 `main` 브랜치의 `build.gradle`, `application.properties`, Java 소스를 기준으로 정리했습니다.
-
+이 저장소는 **Spring AI 기본기 → Tool Calling → MCP → Reactive/고급 MCP → Agent** 순서로 학습하도록 구성되어 있습니다. 실행 명령은 제14장에 모았고, 각 장에서는 해당 단계에서 새로 등장하는 개념과 실제 소스 차이에 집중하도록 정리했습니다.
 
 ---
 

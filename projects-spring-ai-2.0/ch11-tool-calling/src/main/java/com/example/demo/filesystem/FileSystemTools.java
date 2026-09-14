@@ -34,17 +34,17 @@ public class FileSystemTools {
   }
 
   private Path resolve(String relativePath) {
-    Path path = null;
-    // 주어진 경로가 없으면 루트 디렉토리 반환
+    // 경로가 비어 있으면 실습용 루트 디렉터리를 사용
     if (!StringUtils.hasText(relativePath)) {
-      path = rootDirectory;
+      return rootDirectory;
     }
-    // 루트 디렉토리 뒤에 상대 경로를 붙여 절대 경로로 반환
-    path = rootDirectory.resolve(relativePath).normalize();
-    // 루트 디렉토리로 시작하지 않으면 강제로 루트 디렉토리 반환
+
+    // 상대 경로를 정규화하고 실습용 루트 디렉터리 밖으로 나가지 못하게 제한
+    Path path = rootDirectory.resolve(relativePath).normalize();
     if (!path.startsWith(rootDirectory)) {
-      path = rootDirectory;
+      throw new IllegalArgumentException("허용된 작업 경로를 벗어났습니다: " + relativePath);
     }
+
     return path;
   }
 
@@ -128,6 +128,8 @@ public class FileSystemTools {
   @Tool(description = "파일 및 디렉토리 삭제")
   public String deletePath(String relativePath) {
     Path path = resolve(relativePath);
+    if (path.equals(rootDirectory))
+      return "루트 디렉토리는 삭제할 수 없습니다.";
     if (Files.notExists(path))
       return "파일 또는 디렉토리가 존재하지 않습니다.";
     try {

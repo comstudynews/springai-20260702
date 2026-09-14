@@ -39,15 +39,15 @@ public class FileSystemTools {
 
   // ##### 메소드 #####
   private Path resolve(String relativePath) {
-    Path path = null;
+    // 경로가 비어 있으면 실습용 루트 디렉터리를 사용
     if (!StringUtils.hasText(relativePath)) {
-      path = rootDirectory;
+      return rootDirectory;
     }
 
-    path = rootDirectory.resolve(relativePath).normalize();
-
+    // 상대 경로를 정규화하고 실습용 루트 디렉터리 밖으로 나가지 못하게 제한
+    Path path = rootDirectory.resolve(relativePath).normalize();
     if (!path.startsWith(rootDirectory)) {
-      path = rootDirectory;
+      throw new IllegalArgumentException("허용된 작업 경로를 벗어났습니다: " + relativePath);
     }
 
     return path;
@@ -136,6 +136,8 @@ public class FileSystemTools {
     @McpToolParam(description = "삭제할 파일 또는 디렉토리의 상대 경로") String relativePath) {
     // 상대 경로를 절대 경로로 변환하고 존재 여부 확인
     Path path = resolve(relativePath);
+    if (path.equals(rootDirectory))
+      return "루트 디렉토리는 삭제할 수 없습니다.";
     if (Files.notExists(path))
       return "파일 또는 디렉토리가 존재하지 않습니다.";
 
