@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>파일 관리 챗봇</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.5/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.5/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link href="/css/springai.css" rel="stylesheet" />
+  <script src="/js/springai.js"></script>
+  <script>
+    // 브라우저에서 생성한 현재 질문의 요청 UUID
+    let taskId = null;
+    // PendingRequest id를 저장하는 변수
+    let elicitationId = null;
+    // 승인대기요청 확인 중인지 여부를 저장하는 변수
+    let elicitationPolling = false;
+    // 승인대기요청 확인 타이머 ID를 저장하는 변수
+    let elicitationPollingTimerId = null;
+
+    // 질문 템플릿을 입력 양식에 채우는 함수
+    function setQuestion(question) {
+      const questionElement = document.getElementById("question");
+      questionElement.value = question;
+      questionElement.focus();
+    }
+
+    // [제출] 버튼 클릭 시 호출되는 함수
+    async function handleSubmit() {
+      const questionElement = document.getElementById("question");
+      const submitButton = document.getElementById("submitButton");
+      const question = questionElement.value.trim();
+      if (question === "" || submitButton.disabled) return;
+
+      // AI 요청 처리 중 중복 제출 방지
+      submitButton.disabled = true;
+
+      // 도구 호출과 Elicitation 요청을 서로 연결하는 작업 ID 생성
+      taskId = crypto.randomUUID();
+      console.log("taskId: " + taskId);
+      
+      springai.addUserQuestion(question, "chatPanel");
+      springai.setSpinner("spinner", true);
+
+      // Elicitation 요청이 있는지 폴링 시작
+      startElicitationPolling();
+
+      try {
+        // 요청
+        const response = await fetch("/mcp-elicitation/chat", {
+          method: "post",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "text/plain"
+          },
+          body: new URLSearchParams({ question, taskId })
+        });
+        // AI 응답 출력
+        const answerId = springai.addAnswerPlaceHolder("chatPanel");
+        await springai.printAnswerText(response.body, answerId, "chatPanel");
+      } catch (error) {
+        console.error(error);
+      } finally {
+        springai.setSpinner("spinner", false);
+        submitButton.disabled = false;
+
+        // 폴링 중지
+        stopElicitationPolling();
+
+        // 승인/거절/시간초과로 AI 최종 응답이 끝났다면 모달 닫기
+        closeElicitationModal();
+
+        // AI 요청이 끝났으므로 taskId 초기화
+        taskId = null;
+      }
+    }
+
+    // 승인대기요청 확인 시작 함수
+    function startElicitationPolling() {
+      // 폴링 중이라면 바로 종료
+      if (elicitationPolling) return;
+      // 폴링 시작 설정
+      elicitationPolling = true;
+      // 플링하기
+      pollElicitation();
+    }
+
+    // 승인대기요청 확인 중지 함수
+    function stopElicitationPolling() {
+      // 폴링 중지 설정
+      elicitationPolling = false;
+      // 폴링 타이머 중지 및 타이머 ID 초기화
+      clearTimeout(elicitationPollingTimerId);
+      elicitationPollingTimerId = null;
+    }
+
+    // 승인 모달을 닫고 승인대기 상태를 정리하는 함수
+    function closeElicitationModal() {
+      const modalElement = document.getElementById("elicitationModal");
+
+      // 모달에서 포커스가 있는 경우 포커스를 해제
+      if (modalElement.contains(document.activeElement)) {
+        document.activeElement.blur();
+      }
+
+      const modalInstance = bootstrap.Modal.getInstance(modalElement);
+      if (modalInstance) {
+        modalInstance.hide();
+      }
+
+      // 승인대기요청 관련 상태 초기화
+      elicitationId = null;
+      document.getElementById("elicitationMessage").textContent = "";
+    }
+
+    // 폴링하는 함수
+    async function pollElicitation() {
+      try {
+        // 폴링 중이 아니거나 작업 ID가 없을 경우 finally로 이동
+        if (!elicitationPolling || taskId === null) return;
+
+        // 폴링하기
+        const response = await fetch(
+          `/mcp-elicitation/find-pending-request?taskId=${taskId}`,
+          {
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+              "Accept": "application/json"
+            }
+          }
+        );
+
+        // 폴링 응답 상태가 200이 아니면 finally로 이동
+        if (response.status !== 200) return;
+
+        // 폴링 응답(JSON)을 JavaScript 객체로 변환
+        const pendingRequest = await response.json();
+
+        // 이전 Elicitation 요청 ID와 동일하면 모달이 이미 띄워져 있으므로 finally로 이동
+        if (elicitationId === pendingRequest.id) return;
+
+        // Elicitation 요청 ID
+        elicitationId = pendingRequest.id;
+
+        // 사용자가 승인 또는 거부할 때까지 폴링 일시 중지
+        stopElicitationPolling();
+
+        // Elicitation 요청 메시지를 모달에 표시하고 모달 띄우기
+        document.getElementById("elicitationMessage").textContent = pendingRequest.message;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById("elicitationModal")).show();
+      } catch (error) {
+        console.error(error);
+      } finally {
+        // 폴링 중이라면
+        if (elicitationPolling) {
+          // 1초간격으로 다시 폴링
+          elicitationPollingTimerId = setTimeout(pollElicitation, 1000);
+        }
+      }
+    }
+
+    // Elicitation 요청에 대한 응답 처리 함수
+    // - 모달에서 [승인] 또는 [거부] 버튼 클릭 시 호출됨
+    async function respondToElicitation(approved) {
+      // Elicitation 요청이 없다면 종료
+      if (elicitationId === null || taskId === null) return;
+
+      const url = approved
+        ? `/mcp-elicitation/approve?id=${elicitationId}&taskId=${taskId}`
+        : `/mcp-elicitation/decline?id=${elicitationId}&taskId=${taskId}`;
+
+      // Elicitation 요청에 대한 응답을 서버로 전송
+      await fetch(
+        url,
+        {
+          method: "post",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json"
+          }
+        }
+      );
+
+      // 사용자 응답 직후 모달 및 승인대기 상태 정리
+      closeElicitationModal();
+      document.getElementById("question").focus();
+
+      // AI 요청이 진행 중이면 다음 승인대기요청을 확인하기 위해 폴링 재개
+      if (taskId !== null) {
+        startElicitationPolling();
+      }
+    }
+  </script>
+</head>
+
+<body>
+  <div class="d-flex flex-column vh-100">
+    <div id="headPanel" class="navbar justify-content-between">
+      <a href="/" class="navbar-brand ps-2">
+        <img src="/image/spring_ai_logo_with_text.svg" width="200" />
+      </a>
+      <div id="spinner" class="spinner-border text-success d-none me-3" role="status">
+        <span class="visually-hidden">Loading...</span>
+      </div>
+    </div>
+
+    <div id="chatPanel" class="flex-grow-1 container-fluid h-100 my-2" style="overflow-y:auto; overflow-x:hidden;">
+      <div class="d-flex justify-content-start border-bottom m-2">
+        <table>
+          <tr>
+            <td><img src="/image/assistant.png" width="50" /></td>
+            <td><span>파일 또는 디렉토리와 관련된 작업을 말씀해 주세요.</span></td>
+          </tr>
+        </table>
+      </div>
+    </div>
+
+    <div id="inputPanel" class="bg-secondary-subtle">
+      <div class="d-flex flex-wrap gap-2 px-2 pt-2" aria-label="질문 템플릿">
+        <button type="button" class="btn btn-sm btn-outline-success"
+          onclick="setQuestion('루트 디렉토리의 내용을 보여줘.')">루트 디렉토리 내용 보기</button>
+        <button type="button" class="btn btn-sm btn-outline-success"
+          onclick="setQuestion('Spring AI를 소개하는 내용을 spring_ai.txt 파일로 저장')">Spring AI 소개 파일 저장</button>
+        <button type="button" class="btn btn-sm btn-outline-danger"
+          onclick="setQuestion('spring_ai.txt 파일 삭제')">spring_ai.txt 파일 삭제</button>
+      </div>
+      <div class="input-group p-2">
+        <span class="input-group-text">질문</span>
+        <input id="question" type="text" class="form-control" placeholder="파일 관련 질문을 입력하세요">
+        <span class="input-group-text">
+          <button id="submitButton" type="button" class="btn btn-primary" onclick="handleSubmit()">제출</button>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <div id="elicitationModal" class="modal fade" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">삭제 승인</h5>
+        </div>
+        <div class="modal-body">
+          <p id="elicitationMessage" class="mb-0"></p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="respondToElicitation(false)">거부</button>
+          <button type="button" class="btn btn-danger" onclick="respondToElicitation(true)">삭제 승인</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+
+</html>

@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MCP 리소스</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.5/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.5/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link href="/css/springai.css" rel="stylesheet" />
+  <script src="/js/springai.js"></script>
+  <style>
+    .workspace,
+    .workspace-column,
+    .scroll-panel {
+      min-height: 0;
+    }
+
+    .workspace {
+      flex-wrap: nowrap;
+    }
+
+    .resource-list-panel {
+      flex: 0 0 760px;
+      width: 760px;
+      max-width: 760px;
+    }
+
+    .resource-detail-panel {
+      flex: 1 1 0;
+      width: 0;
+    }
+
+    .scroll-panel {
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    .resource-row {
+      cursor: pointer;
+    }
+
+    .resource-content {
+      min-height: 10rem;
+      white-space: pre-wrap;
+    }
+
+    .policy-layout {
+      display: grid;
+      grid-template-columns: 5fr 19fr;
+      gap: 0.5rem;
+    }
+
+    .resource-view:not(.d-none) {
+      display: flex;
+      flex-direction: column;
+    }
+
+    @media (max-width: 991.98px) {
+      .workspace {
+        overflow: auto !important;
+        flex-wrap: wrap;
+      }
+
+      .workspace-column {
+        min-height: 70vh;
+      }
+
+      .resource-list-panel,
+      .resource-detail-panel {
+        flex: 0 0 auto;
+        width: 100%;
+        max-width: none;
+      }
+
+      .policy-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+  <script>
+    async function loadResources() {
+      const spinner = document.getElementById("spinner");
+      const message = document.getElementById("message");
+      const resourceList = document.getElementById("resourceList");
+      spinner.classList.remove("d-none");
+      message.className = "text-secondary";
+      message.textContent = "리소스 목록을 불러오고 있습니다.";
+      resourceList.replaceChildren();
+
+      try {
+        const response = await fetch("/mcp-resource/list-resources", { headers: { "Accept": "application/json" } });
+        if (!response.ok) throw new Error(`리소스 목록 요청 실패 (${response.status})`);
+
+        const entries = Object.entries(await response.json());
+        const count = entries.reduce((total, [, resources]) => total + resources.length, 0);
+        message.textContent = `${entries.length}개 서버에서 ${count}개의 리소스를 조회했습니다.`;
+        if (count === 0) {
+          message.textContent = "현재 MCP Server가 제공하는 리소스가 없습니다.";
+          return;
+        }
+        entries.forEach(([serverName, resources]) => renderResourceSection(serverName, resources));
+      } catch (error) {
+        message.className = "text-danger";
+        message.textContent = error.message;
+      } finally {
+        spinner.classList.add("d-none");
+      }
+    }
+
+    function renderResourceSection(serverName, resources) {
+      const section = document.createElement("section");
+      section.className = "mb-4";
+      const heading = document.createElement("h2");
+      heading.className = "h5 border-bottom pb-2 mb-3";
+      heading.textContent = `${serverName} (${resources.length})`;
+      section.appendChild(heading);
+
+      const table = document.createElement("table");
+      table.className = "table table-hover align-middle";
+      table.innerHTML = `
+        <thead><tr>
+          <th scope="col" style="width: 16%">구분</th>
+          <th scope="col" style="width: 24%">이름</th>
+          <th scope="col" style="width: 30%">URI</th>
+          <th scope="col">설명</th>
+        </tr></thead><tbody></tbody>`;
+
+      const tbody = table.querySelector("tbody");
+      resources.forEach(resource => {
+        const row = document.createElement("tr");
+        row.className = "resource-row";
+        row.tabIndex = 0;
+        row.setAttribute("role", "button");
+        row.onclick = () => selectResource(resource, row);
+        row.onkeydown = event => {
+          if (event.key === "Enter" || event.key === " ") selectResource(resource, row);
+        };
+
+        [resource.type, resource.name, resource.uri, resource.description || "-"].forEach((value, index) => {
+          const cell = document.createElement("td");
+          cell.textContent = value;
+          if (index === 1) cell.className = "fw-semibold text-break";
+          if (index === 2) cell.className = "font-monospace small text-break";
+          row.appendChild(cell);
+        });
+        tbody.appendChild(row);
+      });
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "table-responsive";
+      wrapper.appendChild(table);
+      section.appendChild(wrapper);
+      document.getElementById("resourceList").appendChild(section);
+    }
+
+    let selectedResourceTemplate;
+    let selectedTemplateArgument;
+
+    function selectResource(resource, row) {
+      document.querySelectorAll(".resource-row").forEach(item => item.classList.remove("table-active"));
+      row.classList.add("table-active");
+
+      if (resource.type === "리소스템플릿") {
+        showResourceTemplate(resource);
+      } else {
+        showResource(resource);
+      }
+    }
+
+    function showView(viewId) {
+      document.querySelectorAll(".resource-view").forEach(view => view.classList.add("d-none"));
+      document.getElementById(viewId).classList.remove("d-none");
+    }
+
+    async function updateResource(url) {
+      const spinner = document.getElementById("spinner");
+      const buttons = document.querySelectorAll("[data-resource-action]");
+      spinner.classList.remove("d-none");
+      buttons.forEach(button => button.disabled = true);
+      try {
+        await fetch(url, { method: "GET", mode: "no-cors" });
+        window.location.reload();
+      } catch (error) {
+        const message = document.getElementById("message");
+        message.className = "text-danger";
+        message.textContent = error.message;
+        spinner.classList.add("d-none");
+        buttons.forEach(button => button.disabled = false);
+      }
+    }
+
+    async function showResource(resource) {
+      showView("resourceView");
+      document.getElementById("resourceName").textContent = resource.name;
+      document.getElementById("resourceUri").textContent = resource.uri;
+      await loadResourceContent(resource.uri, document.getElementById("resourceContent"));
+    }
+
+    function showResourceTemplate(resource) {
+      const argumentMatch = resource.uri.match(/\{([^}]+)\}/);
+      selectedResourceTemplate = resource;
+      selectedTemplateArgument = argumentMatch ? argumentMatch[1] : null;
+      showView("resourceTemplateView");
+      document.getElementById("resourceTemplateName").textContent = resource.name;
+      document.getElementById("resourceTemplateUri").textContent = resource.uri;
+      document.getElementById("keyword").value = "";
+      document.getElementById("templateResourceContent").textContent = "항목을 선택하세요.";
+      searchTemplateArguments();
+    }
+
+    async function searchTemplateArguments() {
+      const keyword = document.getElementById("keyword").value;
+      const list = document.getElementById("templateArgumentList");
+      if (!selectedTemplateArgument) {
+        list.replaceChildren();
+        return;
+      }
+      try {
+        const response = await fetch("/mcp-resource/list-complete-args?" + new URLSearchParams({
+          uri: selectedResourceTemplate.uri,
+          argName: selectedTemplateArgument,
+          keyword
+        }), {
+          headers: { "Accept": "application/json" }
+        });
+        if (!response.ok) return;
+        list.replaceChildren();
+        (await response.json()).forEach(name => {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "list-group-item list-group-item-action";
+          item.textContent = name;
+          item.onclick = () => selectTemplateArgument(name, item);
+          list.appendChild(item);
+        });
+      } catch {
+        list.replaceChildren();
+      }
+    }
+
+    function removeCommonIndent(text) {
+      const lines = text.replace(/\r/g, "").split("\n");
+      while (lines.length > 0 && lines[0].trim() === "") lines.shift();
+      while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+
+      const indents = lines
+        .filter(line => line.trim() !== "")
+        .map(line => line.match(/^[\t ]*/)[0].length);
+      const commonIndent = indents.length > 0 ? Math.min(...indents) : 0;
+      return lines.map(line => line.slice(commonIndent)).join("\n");
+    }
+
+    async function selectTemplateArgument(value, item) {
+      document.querySelectorAll("#templateArgumentList .list-group-item").forEach(element => {
+        element.classList.toggle("active", element === item);
+      });
+      const uri = selectedResourceTemplate.uri.replace(`{${selectedTemplateArgument}}`, value);
+      await loadResourceContent(uri, document.getElementById("templateResourceContent"));
+    }
+
+    async function loadResourceContent(uri, content) {
+      const spinner = document.getElementById("spinner");
+      spinner.classList.remove("d-none");
+      content.className = "resource-content bg-body-tertiary border p-3 mb-0 text-secondary";
+      content.textContent = "리소스를 조회하고 있습니다.";
+      try {
+        const response = await fetch("/mcp-resource/get-resource?" + new URLSearchParams({ uri }), {
+          headers: { "Accept": "text/plain" }
+        });
+        content.className = response.ok
+          ? "resource-content bg-body-tertiary border p-3 mb-0"
+          : "resource-content bg-body-tertiary border border-danger p-3 mb-0 text-danger";
+        content.textContent = response.ok
+          ? removeCommonIndent(await response.text())
+          : "리소스를 불러오지 못했습니다.";
+      } catch {
+        content.className = "resource-content bg-body-tertiary border border-danger p-3 mb-0 text-danger";
+        content.textContent = "리소스를 불러오지 못했습니다.";
+      } finally {
+        spinner.classList.add("d-none");
+      }
+    }
+
+    window.addEventListener("DOMContentLoaded", loadResources);
+  </script>
+</head>
+
+<body>
+  <div class="d-flex flex-column vh-100">
+    <div id="headPanel" class="navbar justify-content-between border-bottom">
+      <a href="/" class="navbar-brand ps-2">
+        <img src="/image/spring_ai_logo_with_text.svg" width="200" alt="Spring AI" />
+      </a>
+      <div id="spinner" class="spinner-border spinner-border-sm text-success d-none me-3" role="status">
+        <span class="visually-hidden">Loading...</span>
+      </div>
+    </div>
+
+    <div class="workspace row g-0 flex-grow-1 overflow-hidden">
+      <section class="workspace-column resource-list-panel d-flex flex-column h-100 border-end">
+        <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 border-bottom px-3 py-3">
+          <div>
+            <h1 class="h4 mb-1">MCP 리소스 목록</h1>
+            <p id="message" class="text-secondary mb-0"></p>
+          </div>
+          <div class="btn-group" role="group" aria-label="MCP 리소스 관리">
+            <button type="button" class="btn btn-success btn-sm" data-resource-action
+                onclick="updateResource('http://localhost:8081/resource/add')">리소스 추가</button>
+            <button type="button" class="btn btn-outline-danger btn-sm" data-resource-action
+                onclick="updateResource('http://localhost:8081/resource/remove')">리소스 제거</button>
+          </div>
+        </div>
+        <div id="resourceList" class="scroll-panel flex-grow-1 px-3 py-3"></div>
+      </section>
+
+      <section class="workspace-column resource-detail-panel d-flex flex-column h-100">
+        <div id="emptyView" class="resource-view flex-grow-1 align-items-center justify-content-center p-4 text-center">
+          <div>
+            <h2 class="h5">리소스를 선택하세요</h2>
+            <p class="text-secondary mb-0">왼쪽 목록에서 테스트할 MCP 리소스를 선택하세요.</p>
+          </div>
+        </div>
+
+        <div id="resourceView" class="resource-view d-none flex-grow-1 overflow-hidden">
+          <div class="bg-body-tertiary border-bottom px-3 py-3">
+            <h2 id="resourceName" class="h5 mb-0"></h2>
+            <div id="resourceUri" class="font-monospace small text-secondary"></div>
+          </div>
+          <div class="scroll-panel flex-grow-1 p-3">
+            <div id="resourceContent" class="resource-content bg-body-tertiary border p-3 mb-0"></div>
+          </div>
+        </div>
+
+        <div id="resourceTemplateView" class="resource-view d-none flex-grow-1 overflow-hidden">
+          <div class="bg-body-tertiary border-bottom px-3 py-3">
+            <h2 id="resourceTemplateName" class="h5 mb-0"></h2>
+            <div id="resourceTemplateUri" class="font-monospace small text-secondary"></div>
+          </div>
+          <div class="scroll-panel flex-grow-1 p-3">
+            <input id="keyword" type="search" class="form-control mb-2" placeholder="검색어"
+                oninput="searchTemplateArguments()" />
+            <div class="policy-layout mb-3">
+              <div><div id="templateArgumentList" class="list-group"></div></div>
+              <div>
+                <div id="templateResourceContent" class="resource-content bg-body-tertiary border p-3 text-secondary">항목을 선택하세요.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</body>
+
+</html>

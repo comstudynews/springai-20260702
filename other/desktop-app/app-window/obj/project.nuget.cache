@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "oiMvTKRiDjs=",
+  "success": true,
+  "projectFilePath": "C:\\Temp\\app-window\\app-window\\app-window.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\blueskii\\.nuget\\packages\\microsoft.web.webview2\\1.0.3179.45\\microsoft.web.webview2.1.0.3179.45.nupkg.sha512"
+  ],
+  "logs": []
+}

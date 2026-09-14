@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MCP 프롬프트</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.5/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.5/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link href="/css/springai.css" rel="stylesheet" />
+  <script src="/js/springai.js"></script>
+  <style>
+    .workspace, .workspace-column, .scroll-panel { min-height: 0; }
+    .prompt-list-panel { flex: 0 0 520px; width: 520px; max-width: 520px; }
+    .prompt-list-section { flex: 0 0 60%; min-height: 0; }
+    .prompt-arguments-section { flex: 0 0 40%; min-height: 0; }
+    .prompt-detail-panel { flex: 1 1 0; width: 0; }
+    .prompt-row { cursor: pointer; }
+    .prompt-content-panel { flex: 0 0 40%; min-height: 12rem; }
+    .prompt-content { min-height: 8rem; font-size: 0.85em; white-space: pre-wrap; }
+
+    @media (max-width: 991.98px) {
+      .workspace { overflow: auto !important; }
+      .workspace-column { min-height: 70vh; }
+      .prompt-list-panel, .prompt-detail-panel {
+        flex: 0 0 auto;
+        width: 100%;
+        max-width: none;
+      }
+      .prompt-content-panel { flex-basis: auto; }
+    }
+  </style>
+  <script>
+    let selectedPrompt;
+
+    async function loadPrompts() {
+      const spinner = document.getElementById("spinner");
+      const message = document.getElementById("message");
+      const promptList = document.getElementById("promptList");
+      spinner.classList.remove("d-none");
+      message.className = "text-secondary mb-0";
+      message.textContent = "프롬프트 목록을 불러오고 있습니다.";
+      promptList.replaceChildren();
+
+      try {
+        const response = await fetch("/mcp-prompt/list-prompts", {
+          headers: { "Accept": "application/json" }
+        });
+        if (!response.ok) throw new Error(`프롬프트 목록 요청 실패 (${response.status})`);
+
+        const entries = Object.entries(await response.json());
+        const count = entries.reduce((total, [, prompts]) => total + prompts.length, 0);
+        message.textContent = `${entries.length}개 서버에서 ${count}개의 프롬프트를 조회했습니다.`;
+        if (count === 0) {
+          message.textContent = "현재 MCP Server가 제공하는 프롬프트가 없습니다.";
+          return;
+        }
+
+        let firstRow;
+        entries.forEach(([serverName, prompts]) => {
+          firstRow ||= renderPromptSection(serverName, prompts);
+        });
+        firstRow?.click();
+      } catch (error) {
+        message.className = "text-danger mb-0";
+        message.textContent = error.message;
+      } finally {
+        spinner.classList.add("d-none");
+      }
+    }
+
+    function renderPromptSection(serverName, prompts) {
+      const section = document.createElement("section");
+      section.className = "mb-4";
+      const heading = document.createElement("h2");
+      heading.className = "h5 border-bottom pb-2 mb-3";
+      heading.textContent = `${serverName} (${prompts.length})`;
+      section.appendChild(heading);
+
+      const table = document.createElement("table");
+      table.className = "table table-hover align-middle";
+      table.innerHTML = `
+        <thead><tr><th scope="col" style="width:38%">이름</th><th scope="col">설명</th></tr></thead>
+        <tbody></tbody>`;
+      const tbody = table.querySelector("tbody");
+
+      prompts.forEach(prompt => {
+        const row = document.createElement("tr");
+        row.className = "prompt-row";
+        row.tabIndex = 0;
+        row.setAttribute("role", "button");
+        row.onclick = () => selectPrompt(prompt, row);
+        row.onkeydown = event => {
+          if (event.key === "Enter" || event.key === " ") row.click();
+        };
+        const name = document.createElement("td");
+        name.className = "fw-semibold text-break";
+        name.textContent = prompt.name;
+        const description = document.createElement("td");
+        description.className = "small text-break";
+        description.textContent = prompt.description || "-";
+        row.append(name, description);
+        tbody.appendChild(row);
+      });
+
+      const wrapper = document.createElement("div");
+      wrapper.className = "table-responsive";
+      wrapper.appendChild(table);
+      section.appendChild(wrapper);
+      document.getElementById("promptList").appendChild(section);
+      return tbody.querySelector("tr");
+    }
+
+    function selectPrompt(prompt, row) {
+      selectedPrompt = prompt;
+      document.querySelectorAll(".prompt-row").forEach(item => item.classList.remove("table-active"));
+      row.classList.add("table-active");
+      document.getElementById("promptContent").textContent = "프롬프트 매개값을 입력하세요.";
+      const chatPanel = document.getElementById("chatPanel");
+      chatPanel.replaceChildren();
+      chatPanel.appendChild(createChatGreeting());
+      renderPromptArguments(prompt.arguments || []);
+      updateChatControls();
+      if ((prompt.arguments || []).length === 0) showPrompt();
+    }
+
+    async function updatePrompt(url) {
+      const spinner = document.getElementById("spinner");
+      const buttons = document.querySelectorAll("[data-prompt-action]");
+      spinner.classList.remove("d-none");
+      buttons.forEach(button => button.disabled = true);
+      try {
+        await fetch(url, { method: "GET", mode: "no-cors" });
+        window.location.reload();
+      } catch (error) {
+        const message = document.getElementById("message");
+        message.className = "text-danger mb-0";
+        message.textContent = error.message;
+        spinner.classList.add("d-none");
+        buttons.forEach(button => button.disabled = false);
+      }
+    }
+
+    function renderPromptArguments(args) {
+      const container = document.getElementById("promptArguments");
+      container.replaceChildren();
+      args.forEach(arg => {
+        const group = document.createElement("div");
+        group.className = "scroll-panel d-flex flex-column flex-grow-1 overflow-hidden mb-3";
+        const label = document.createElement("label");
+        label.className = "form-label fw-semibold";
+        label.htmlFor = `promptArg-${arg.name}`;
+        label.textContent = `${arg.name}${arg.required ? " *" : ""}`;
+
+        const layout = document.createElement("div");
+        layout.className = "scroll-panel d-flex flex-column flex-grow-1 gap-2";
+        const input = document.createElement("input");
+        input.id = `promptArg-${arg.name}`;
+        input.name = arg.name;
+        input.type = "search";
+        input.className = "form-control";
+        input.placeholder = "검색어";
+        input.dataset.promptArg = "";
+        input.dataset.required = String(arg.required);
+        const candidates = document.createElement("div");
+        candidates.className = "list-group flex-grow-1 overflow-y-auto";
+        input.addEventListener("input", () => searchPromptArgument(arg.name, input.value, candidates));
+        input.addEventListener("change", showPromptIfReady);
+
+        layout.append(input, candidates);
+        group.append(label, layout);
+        container.appendChild(group);
+        searchPromptArgument(arg.name, "", candidates);
+      });
+    }
+
+    async function searchPromptArgument(argName, keyword, list) {
+      const requestId = crypto.randomUUID();
+      list.dataset.requestId = requestId;
+      list.replaceChildren();
+      try {
+        const response = await fetch("/mcp-prompt/list-complete-arg?" + new URLSearchParams({
+          promptName: selectedPrompt.name, argName, keyword
+        }), { headers: { "Accept": "application/json" } });
+        if (!response.ok) return;
+
+        const values = await response.json();
+        if (list.dataset.requestId !== requestId) return;
+
+        values.forEach(value => {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "list-group-item list-group-item-action py-2";
+          item.textContent = value;
+          item.onclick = () => {
+            document.getElementById(`promptArg-${argName}`).value = value;
+            list.querySelectorAll(".list-group-item").forEach(element => {
+              element.classList.toggle("active", element === item);
+            });
+            showPromptIfReady();
+          };
+          list.appendChild(item);
+        });
+      } catch {
+        list.replaceChildren();
+      }
+    }
+
+    function getPromptArgs() {
+      return Object.fromEntries(
+        [...document.querySelectorAll("[data-prompt-arg]")]
+          .map(input => [input.name, input.value.trim()])
+          .filter(([, value]) => value)
+      );
+    }
+
+    function promptArgsAreReady() {
+      return ![...document.querySelectorAll('[data-prompt-arg][data-required="true"]')]
+        .some(input => !input.value.trim());
+    }
+
+    function showPromptIfReady() {
+      if (promptArgsAreReady()) showPrompt();
+    }
+
+    async function showPrompt() {
+      if (!selectedPrompt || !promptArgsAreReady()) return;
+      const content = document.getElementById("promptContent");
+      const spinner = document.getElementById("spinner");
+      spinner.classList.remove("d-none");
+      content.className = "prompt-content flex-grow-1 bg-body-tertiary border py-3 pe-3 ps-2 text-secondary";
+      content.textContent = "프롬프트를 조회하고 있습니다.";
+      try {
+        const response = await fetch("/mcp-prompt/get-prompt", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "text/plain"
+          },
+          body: new URLSearchParams({ promptName: selectedPrompt.name, ...getPromptArgs() })
+        });
+        if (!response.ok) throw new Error(`프롬프트 요청 실패 (${response.status})`);
+        content.className = "prompt-content flex-grow-1 bg-body-tertiary border py-3 pe-3 ps-2";
+        content.textContent = await response.text();
+      } catch (error) {
+        content.className = "prompt-content flex-grow-1 bg-body-tertiary border border-danger py-3 pe-3 ps-2 text-danger";
+        content.textContent = error.message;
+      } finally {
+        spinner.classList.add("d-none");
+      }
+    }
+
+    function createChatGreeting() {
+      const greeting = document.createElement("div");
+      greeting.className = "d-flex justify-content-start border-bottom m-2 pb-2";
+      greeting.innerHTML = `
+        <img src="/image/assistant.png" width="50" height="50" alt="Assistant" />
+        <span class="align-self-center ms-2">${selectedPrompt?.name === "vehicle-access-control-prompt"
+          ? "질문을 입력하세요"
+          : "질문을 입력하세요."}</span>`;
+      return greeting;
+    }
+
+    function updateChatControls() {
+      const supportsImage = selectedPrompt?.name === "vehicle-access-control-prompt";
+      const attach = document.getElementById("attach");
+      attach.disabled = !supportsImage;
+      if (!supportsImage) attach.value = "";
+      document.getElementById("attachButton").classList.toggle("disabled", !supportsImage);
+      document.getElementById("attachName").textContent = "선택된 이미지 없음";
+      document.getElementById("question").disabled = !selectedPrompt;
+      document.getElementById("submitButton").disabled = !selectedPrompt;
+    }
+
+    function previewImage() {
+      const file = document.getElementById("attach").files[0];
+      document.getElementById("attachName").textContent = file?.name || "선택된 이미지 없음";
+    }
+
+    async function handleSubmit() {
+      if (!selectedPrompt || !promptArgsAreReady()) {
+        alert("필수 프롬프트 매개값을 입력해 주세요.");
+        return;
+      }
+      const attach = document.getElementById("attach").files[0];
+      const question = document.getElementById("question").value.trim();
+
+      const spinner = document.getElementById("spinner");
+      spinner.classList.remove("d-none");
+      try {
+        const args = getPromptArgs();
+        const endpoint = `/mcp-prompt/${encodeURIComponent(selectedPrompt.name)}`;
+        if (question) {
+          springai.addUserQuestion(question, "chatPanel");
+        }
+
+        let response;
+        if (selectedPrompt.name === "vehicle-access-control-prompt" && attach) {
+          springai.vision.previewImage("attach", "chatPanel");
+          const formData = new FormData();
+          formData.append("attach", attach);
+          formData.append("promptName", selectedPrompt.name);
+          formData.append("device", args.device);
+          response = await fetch(endpoint, {
+            method: "POST",
+            body: formData
+          });
+        } else {
+          response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+              "Accept": "text/plain"
+            },
+            body: new URLSearchParams({
+              promptName: selectedPrompt.name,
+              question,
+              ...args
+            })
+          });
+        }
+        if (!response.ok) throw new Error(`채팅 요청 실패 (${response.status})`);
+        const uuid = springai.addAnswerPlaceHolder("chatPanel");
+        springai.printAnswerText(response.body, uuid, "chatPanel");
+      } catch (error) {
+        springai.addUserQuestion(error.message, "chatPanel");
+      } finally {
+        spinner.classList.add("d-none");
+      }
+    }
+
+    window.addEventListener("DOMContentLoaded", loadPrompts);
+  </script>
+</head>
+
+<body>
+  <div class="d-flex flex-column vh-100">
+    <div id="headPanel" class="navbar justify-content-between border-bottom">
+      <a href="/" class="navbar-brand ps-2">
+        <img src="/image/spring_ai_logo_with_text.svg" width="200" alt="Spring AI" />
+      </a>
+      <div id="spinner" class="spinner-border spinner-border text-success d-none me-3" role="status">
+        <span class="visually-hidden">Loading...</span>
+      </div>
+    </div>
+
+    <div class="workspace row g-0 flex-grow-1 flex-wrap flex-lg-nowrap overflow-hidden">
+      <section class="workspace-column prompt-list-panel d-flex flex-column h-100 border-end">
+        <div class="prompt-list-section d-flex flex-column border-bottom overflow-hidden">
+          <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 border-bottom px-3 py-3">
+            <div>
+              <h1 class="h4 mb-1">MCP 프롬프트 목록</h1>
+              <p id="message" class="text-secondary mb-0"></p>
+            </div>
+            <div class="btn-group" role="group" aria-label="MCP 프롬프트 관리">
+              <button type="button" class="btn btn-success btn-sm" data-prompt-action
+                  onclick="updatePrompt('http://localhost:8081/prompt/add')">프롬프트 추가</button>
+              <button type="button" class="btn btn-outline-danger btn-sm" data-prompt-action
+                  onclick="updatePrompt('http://localhost:8081/prompt/remove')">프롬프트 제거</button>
+            </div>
+          </div>
+          <div id="promptList" class="scroll-panel flex-grow-1 overflow-y-auto overflow-x-hidden px-3 py-3"></div>
+        </div>
+        <div class="prompt-arguments-section d-flex flex-column overflow-hidden px-3 py-3">
+          <h2 class="h5 mb-3">프롬프트 매개값</h2>
+          <div id="promptArguments" class="scroll-panel d-flex flex-column flex-grow-1 overflow-hidden"></div>
+        </div>
+      </section>
+
+      <section class="workspace-column prompt-detail-panel d-flex flex-column h-100">
+        <section class="prompt-content-panel d-flex flex-column border-bottom overflow-hidden">
+          <div class="bg-body-tertiary border-bottom px-3 py-3">
+            <div class="fw-bold">최종 프롬프트</div>
+          </div>
+          <div class="scroll-panel d-flex flex-grow-1 overflow-y-auto overflow-x-hidden py-3 pe-3 ps-0">
+            <div id="promptContent" class="prompt-content flex-grow-1 bg-body-tertiary border py-3 pe-3 ps-2 text-secondary">프롬프트 내용이 여기에 표시됩니다.</div>
+          </div>
+        </section>
+
+        <section class="d-flex flex-column flex-grow-1 overflow-hidden">
+          <div class="bg-body-tertiary border-bottom px-3 py-2"><h2 class="h6 mb-0">채팅</h2></div>
+          <div id="chatPanel" class="scroll-panel flex-grow-1 overflow-y-auto overflow-x-hidden px-2 py-2"></div>
+          <div id="inputPanel" class="bg-secondary-subtle border-top">
+            <div class="d-grid gap-2 p-2" style="grid-template-columns: minmax(0, 1fr) auto;">
+              <div class="d-grid gap-2">
+                <input id="question" type="text" class="form-control" placeholder="질문을 입력하세요." disabled
+                    onkeydown="if (event.key === 'Enter') handleSubmit()">
+                <div class="input-group">
+                  <label id="attachButton" for="attach" class="btn btn-outline-secondary">이미지 선택</label>
+                  <span id="attachName" class="form-control text-secondary">선택된 이미지 없음</span>
+                  <input id="attach" type="file" class="visually-hidden" accept="image/*" onchange="previewImage()" disabled>
+                </div>
+              </div>
+              <button id="submitButton" type="button" class="btn btn-primary px-4" onclick="handleSubmit()" disabled>제출</button>
+            </div>
+          </div>
+        </section>
+      </section>
+    </div>
+  </div>
+</body>
+
+</html>
