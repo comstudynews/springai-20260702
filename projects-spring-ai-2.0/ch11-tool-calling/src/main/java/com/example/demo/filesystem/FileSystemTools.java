@@ -91,14 +91,21 @@ public class FileSystemTools {
       !StringUtils.hasText(extName)) {
       return "디렉토리 또는 파일명이 없습니다.";
     }
+    if(fileName.contains("/") || fileName.contains("\\") ||
+      extName.contains("/") || extName.contains("\\")) {
+      return "파일 이름과 확장 이름에는 경로를 포함할 수 없습니다.";
+    }
     if(!StringUtils.hasText(content)) {
       content = "";
     }
     Path path = resolve(parentPath);
     if(!fileName.endsWith("." + extName)) {
-      path = path.resolve(fileName + "." + extName);
+      path = path.resolve(fileName + "." + extName).normalize();
     } else {
-      path = path.resolve(fileName);
+      path = path.resolve(fileName).normalize();
+    }
+    if(!path.startsWith(rootDirectory)) {
+      return "허용된 작업 경로를 벗어났습니다.";
     }
     try {
       Files.writeString(path, content, StandardCharsets.UTF_8);
