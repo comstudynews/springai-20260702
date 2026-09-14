@@ -32,6 +32,19 @@
 - REST API에 대한 기초 이해
 - JSON 구조에 대한 기초 이해
 
+### 초보자 주해 읽는 방법
+
+본문에서 처음 접하면 이해하기 어려운 용어에는 **초보자 주해**를 붙였습니다. 주해는 용어를 외우기 위한 정의가 아니라, **현재 소스에서 그 코드가 왜 필요한지**를 빠르게 이해하기 위한 설명입니다.
+
+> **초보자 주해 — 먼저 이것만 구분하세요**
+>
+> - **LLM**: 질문을 이해하고 다음에 할 일을 판단하는 두뇌
+> - **Tool**: LLM이 필요할 때 사용하도록 애플리케이션이 제공하는 기능
+> - **Spring AI**: Java/Spring 애플리케이션과 LLM을 연결해 주는 라이브러리
+> - **MCP**: Tool을 다른 프로그램이나 서버에 두고도 일정한 방식으로 연결하기 위한 통신 규칙
+>
+> 처음에는 클래스명과 설정을 전부 외우지 말고 **“누가 판단하고, 누가 실제 실행하는가?”**만 계속 확인하면 됩니다.
+
 ### 원 과정 구성
 
 | 단원 | 시간 | 주요 내용 |
@@ -66,6 +79,12 @@ LLM은 사용자의 질문을 이해하고 자연어 답변을 생성하는 데 
 LLM이 학습 과정에서 얻은 지식만 사용한다면 현재 시점의 날씨를 정확하게 알 수 없습니다. 최신 날씨 정보를 얻으려면 외부 날씨 API 또는 검색 기능이 필요합니다.
 
 이때 LLM에게 외부 기능을 연결하는 대표적인 방법이 **Tool Calling**입니다.
+
+> **초보자 주해 — LLM과 API**
+>
+> LLM은 사람처럼 문장을 이해하고 답을 만드는 모델입니다. 그러나 LLM 자체가 내 PC의 파일을 열거나 인터넷 사이트에 접속하는 것은 아닙니다.
+>
+> 외부 시스템의 기능을 프로그램에서 호출할 때 사용하는 통로를 보통 **API**라고 합니다. Tool Calling은 **LLM의 판단**과 **실제 Java/API 기능 실행**을 연결하는 역할을 합니다.
 
 ---
 
@@ -113,6 +132,12 @@ Tool이 몇 개 없고 모두 같은 Spring Boot 애플리케이션 안에 있�
 - Tool 제공 애플리케이션과 AI 애플리케이션을 분리하고 싶다.
 
 이 문제를 해결하기 위해 Tool 제공 방식을 표준화하는 구조가 필요합니다. MCP는 AI 애플리케이션과 외부 Tool 제공 시스템 사이의 연결 규칙을 제공합니다.
+
+> **초보자 주해 — MCP는 무엇을 표준화하나요?**
+>
+> 휴대전화마다 충전 단자가 제각각이면 케이블을 따로 준비해야 합니다. MCP도 비슷합니다. 파일 Tool, 검색 Tool, 사내 시스템 Tool을 각각 다른 방식으로 연결하지 않고, **Host와 외부 Tool Server가 공통 규칙으로 대화하도록 만드는 것**이 핵심입니다.
+>
+> 이 저장소에서는 같은 종류의 Tool이 제11장에서는 애플리케이션 내부 `@Tool`로, 제12장에서는 외부 MCP Server의 `@McpTool`로 구현됩니다.
 
 ---
 
@@ -218,6 +243,15 @@ public class DateTimeTools {
 
 `@Tool`을 붙였다고 자동으로 모든 ChatClient가 이 Tool을 사용하는 것은 아닙니다. 실제 연결은 Service에서 합니다.
 
+> **초보자 주해 — @Component, Bean, Annotation**
+>
+> - **Annotation(애노테이션)**: `@Tool`, `@Component`처럼 코드에 부가 정보를 붙이는 표시
+> - **Spring Bean**: Spring이 생성하고 관리하는 Java 객체
+> - `@Component`: “이 클래스의 객체를 Spring이 관리해 주세요”라는 뜻
+> - `@Tool`: “이 메서드는 LLM이 선택할 수 있는 Tool입니다”라는 뜻
+>
+> 즉 `DateTimeTools`는 먼저 Spring Bean이 되고, 그 객체를 `DateTimeService`가 `.tools(dateTimeTools)`로 ChatClient에 연결합니다.
+
 ---
 
 ## 2.3 DateTimeService에서 Tool을 LLM에 연결한다
@@ -257,6 +291,18 @@ DateTimeTools 실행
    ↓
 Tool 결과를 이용해 최종 답변 생성
 ```
+
+> **초보자 주해 — ChatClient 코드 한 줄씩 읽기**
+>
+> ```java
+> chatClient.prompt()       // 이번 질문을 만들기 시작
+>     .user(question)       // 사용자의 질문 추가
+>     .tools(dateTimeTools) // 사용할 수 있는 Tool 등록
+>     .call()               // LLM 호출
+>     .content();            // 최종 답변 문자열 꺼내기
+> ```
+>
+> 이 체인은 **질문 만들기 → Tool 알려주기 → 모델 호출 → 답 꺼내기** 순서로 읽으면 됩니다.
 
 ---
 
@@ -338,6 +384,12 @@ ToolContext로 전달
 http://localhost:8080/heating-system-tools
 ```
 
+> **초보자 주해 — ToolContext는 숨은 메모와 비슷합니다**
+>
+> 사용자가 “24도로 맞춰줘”라고 말한 값은 LLM이 Tool 인자로 만들 수 있습니다. 반면 `controlKey`처럼 프로그램 내부에서만 알아야 하는 값은 사용자 질문에 섞기보다 `ToolContext`로 전달할 수 있습니다.
+>
+> 현재 소스에서는 `heatingSystemKey`가 있어야 난방 시작/중지 Tool이 성공합니다. 즉 **LLM이 만드는 인자와 애플리케이션이 직접 넘기는 내부 정보를 분리하는 예제**입니다.
+
 추천 질문:
 
 ```text
@@ -362,6 +414,16 @@ public List<String> recommendMovie(...)
 ```
 
 `returnDirect = true`가 있는 Tool과 일반 Tool의 응답 흐름을 비교하는 예제입니다.
+
+> **초보자 주해 — returnDirect**
+>
+> 일반적인 Tool Calling은 Tool 실행 결과를 다시 LLM에게 보내 자연어 답변으로 정리합니다.
+>
+> ```text
+> Tool 결과 → LLM → 최종 답변
+> ```
+>
+> `returnDirect = true`는 Tool 결과를 LLM의 추가 가공 단계 없이 직접 반환하는 흐름을 실습하기 위한 옵션입니다.
 
 브라우저:
 
@@ -395,6 +457,12 @@ ToolExecutionExceptionProcessor toolExecutionExceptionProcessor() {
 ```
 
 따라서 이 예제는 **예외 처리 방식을 켜고 끄면서 비교하기 위한 실습 코드**로 이해하는 것이 정확합니다.
+
+> **초보자 주해 — 예외(Exception)**
+>
+> 예외는 프로그램 실행 중 정상 흐름을 계속할 수 없는 문제 상황입니다. 이 예제에서는 사용자 ID가 없다는 상황을 일부러 `RuntimeException`으로 발생시킵니다.
+>
+> 핵심은 **Tool 내부에서 오류가 났을 때 애플리케이션이 바로 실패할지, 오류 정보를 이용해 다른 응답을 만들지**를 비교해 보는 것입니다.
 
 브라우저:
 
@@ -440,6 +508,12 @@ boomBarrierUp() 또는 boomBarrierDown()
 http://localhost:8080/boom-barrier-tools
 ```
 
+> **초보자 주해 — Media와 멀티모달**
+>
+> 텍스트뿐 아니라 이미지까지 함께 처리하는 방식을 **멀티모달**이라고 합니다. Spring AI의 `Media` 객체는 이미지 바이트와 MIME 타입(`image/jpeg` 같은 파일 형식 정보)을 LLM 요청에 함께 넣기 위한 그릇이라고 이해하면 됩니다.
+>
+> 이 예제에서 LLM은 이미지를 보고 차량 번호를 판단하지만, 실제 등록 여부 확인과 차단기 동작은 Java Tool이 수행합니다.
+
 ---
 
 ## 3.6 6단계 — FileSystemTools와 ChatMemory
@@ -471,6 +545,12 @@ this.rootDirectory =
 ```java
 fileSystemService.chat(question, session.getId())
 ```
+
+> **초보자 주해 — ChatMemory와 conversationId**
+>
+> HTTP 요청은 기본적으로 서로 독립적입니다. 첫 번째 요청에서 이야기한 내용을 다음 요청이 자동으로 기억하지 않습니다.
+>
+> `ChatMemory`는 이전 대화 내용을 보관하고, `conversationId`는 **어느 대화를 이어갈 것인지 구분하는 번호표** 역할을 합니다. 현재 소스에서는 브라우저 세션 ID인 `session.getId()`를 그 번호표로 사용합니다.
 
 브라우저:
 
@@ -535,6 +615,17 @@ spring_ai_tool_search_vector_store
 
 임베딩 차원은 실제 코드에서 3072입니다.
 
+> **초보자 주해 — Tool Search, Embedding, VectorStore**
+>
+> Tool이 2~3개라면 모든 Tool 설명을 한꺼번에 LLM에게 보여줘도 됩니다. Tool이 많아지면 질문과 관련된 Tool을 먼저 찾는 과정이 필요합니다.
+>
+> - **regex**: 문자열 패턴을 기준으로 찾는 비교적 단순한 방식
+> - **embedding**: 문장 의미를 숫자 배열(Vector)로 바꾼 것
+> - **VectorStore**: Vector를 저장하고 의미가 비슷한 것을 찾는 저장소
+> - **3072차원**: 하나의 의미를 3072개의 숫자로 표현한다는 뜻
+>
+> 현재 전체 버전은 PGVector를 이용한 의미 기반 Tool 검색을 구성하므로 PostgreSQL/PGVector가 필요합니다.
+
 브라우저:
 
 ```text
@@ -586,6 +677,14 @@ public String getCurrentDateTime() { ... }
 파라미터도 `@ToolParam`에서 `@McpToolParam`으로 바뀝니다.
 
 핵심 로직보다 **Tool이 존재하는 위치와 연결 방식이 달라지는 것**이 중요합니다.
+
+> **초보자 주해 — Host / Client / Server**
+>
+> - **Host**: 사용자가 실제로 사용하는 AI 애플리케이션
+> - **MCP Client**: Host 안에서 MCP Server와 통신하는 연결 담당
+> - **MCP Server**: 외부 Tool, Resource, Prompt 등을 제공하는 프로그램
+>
+> 식당에 비유하면 Host는 손님을 상대하는 식당, MCP Client는 주문을 전달하는 직원, MCP Server는 실제 기능을 수행하는 주방과 비슷합니다.
 
 ---
 
@@ -642,6 +741,12 @@ ChatClient
 LLM
 ```
 
+> **초보자 주해 — ToolCallbackProvider**
+>
+> 제11장에서는 `DateTimeTools` 같은 Java 객체를 직접 `.tools(...)`에 넣었습니다. MCP에서는 Tool이 다른 프로세스나 서버에 있으므로 Host가 그 객체를 직접 가지고 있지 않습니다.
+>
+> `ToolCallbackProvider`는 **MCP Client가 발견한 외부 Tool들을 ChatClient가 사용할 수 있는 형태로 모아 주는 연결 어댑터**라고 이해하면 됩니다.
+
 ---
 
 # 제5장. STDIO MCP Server를 실제 소스로 이해하기
@@ -670,6 +775,15 @@ spring.ai.mcp.server.type=SYNC
 ```
 
 웹 포트가 아니라 stdin/stdout으로 통신합니다.
+
+> **초보자 주해 — STDIO**
+>
+> - **stdin(Standard Input)**: 프로그램으로 들어오는 표준 입력
+> - **stdout(Standard Output)**: 프로그램이 내보내는 표준 출력
+>
+> STDIO MCP에서는 이 통로를 사람이 아니라 **Host와 MCP Server가 메시지를 주고받는 통신선**으로 사용합니다.
+>
+> 따라서 stdout에 임의의 문자열이 섞이면 MCP 메시지와 충돌할 수 있으므로 일반 출력 로그 사용에 주의해야 합니다.
 
 ---
 
@@ -700,6 +814,12 @@ spring.ai.mcp.client.type=SYNC
 ② `mcp-servers.json` 경로 수정  
 ③ Host 실행  
 ④ Host가 Server 프로세스 실행
+
+> **초보자 주해 — JAR과 bootJar**
+>
+> **JAR**은 Java 프로그램을 하나의 실행 파일 형태로 묶은 결과물입니다. `bootJar`는 Spring Boot 애플리케이션을 실행 가능한 JAR로 만드는 Gradle 작업입니다.
+>
+> STDIO 예제에서는 Host가 `java -jar ...`로 MCP Server를 직접 실행하므로 **Server JAR을 먼저 만들어 두어야 합니다.**
 
 ---
 
@@ -736,6 +856,16 @@ spring.ai.mcp.client.type=SYNC
 ```
 
 따라서 현재 저장소 실행 기준은 **Streamable HTTP**입니다.
+
+> **초보자 주해 — Streamable HTTP와 endpoint**
+>
+> HTTP는 브라우저와 웹 서버가 통신할 때 사용하는 네트워크 방식입니다. Streamable HTTP MCP에서는 MCP 메시지를 HTTP 연결 위에서 주고받습니다.
+>
+> - `http://localhost:8081`: MCP Server 주소
+> - `/mcp`: MCP 요청을 받는 endpoint(접수 창구)
+> - `8081`: Server가 사용하는 포트 번호
+>
+> STDIO가 로컬 프로세스 사이의 통신이라면, Streamable HTTP는 **주소와 포트를 가진 서버에 접속하는 통신**으로 먼저 이해하면 됩니다.
 
 ---
 
@@ -830,6 +960,16 @@ stream()
 boundedElastic
 ```
 
+> **초보자 주해 — Mono, Flux, Blocking, boundedElastic**
+>
+> - **Mono**: 결과가 0개 또는 1개 나오는 비동기 흐름
+> - **Flux**: 결과가 여러 개 연속해서 나올 수 있는 비동기 흐름
+> - **Blocking**: 작업이 끝날 때까지 현재 스레드가 기다리는 것
+> - **이벤트 루프**: 적은 수의 스레드가 많은 요청을 번갈아 처리하는 방식
+> - **boundedElastic**: 오래 기다릴 수 있는 작업을 이벤트 루프 대신 별도 작업용 스레드에서 처리하도록 돕는 Scheduler
+>
+> 초보자는 우선 **“WebFlux에서는 오래 기다리는 작업으로 메인 처리 흐름을 막지 않도록 주의한다”** 정도로 이해하면 충분합니다.
+
 ---
 
 # 제8장. 실제 FileSystem Tool 분석
@@ -879,6 +1019,13 @@ fetch(url)
 
 검색과 본문 수집을 분리한 구조입니다.
 
+> **초보자 주해 — WebClient와 Jsoup**
+>
+> - **WebClient**: Java 코드에서 다른 웹 서버/API에 HTTP 요청을 보내는 Spring 도구
+> - **Jsoup**: HTML 문서를 읽고 태그 구조를 분석하는 Java 라이브러리
+>
+> `search()`는 검색 API에서 후보 URL을 얻고, `fetch()`는 그 URL의 HTML을 받아 본문 텍스트를 추출합니다. 즉 **검색 결과 찾기**와 **선택한 페이지 읽기**를 분리한 구조입니다.
+
 ---
 
 ## 9.2 실제 활성 위치
@@ -915,6 +1062,24 @@ CarCheckTools.checkCarNumber()
 ---
 
 # 제11장. Annotation MCP 프로젝트는 고급 단계다
+
+## 11.0 초보자용 MCP 고급 기능 용어표
+
+| 용어 | 초보자용 설명 |
+|---|---|
+| Logging | MCP Server가 실행 정보를 Client에 알려주는 기능 |
+| Progress | 오래 걸리는 작업이 얼마나 진행됐는지 알려주는 기능 |
+| Resource | MCP Server가 제공하는 문서·데이터 같은 읽을거리 |
+| Resource Template | 값에 따라 URI가 달라지는 Resource의 틀 |
+| Prompt | MCP Server가 제공하는 재사용 가능한 프롬프트 |
+| Completion | Prompt/Resource에 넣을 값의 자동완성 후보를 제공하는 기능 |
+| Sampling | MCP Server의 작업 과정에서 Client 쪽 모델 호출을 요청하는 기능 |
+| Elicitation | 작업에 필요한 승인이나 추가 정보를 사용자에게 다시 요청하는 기능 |
+| Tool Changed | 실행 중 Tool 목록이 바뀌었음을 Client에 알리는 기능 |
+
+> **초보자 주해**
+>
+> 이 기능들은 Tool Calling의 기초가 아닙니다. `@Tool → @McpTool → STDIO → WebMVC MCP`가 이해된 뒤에 보는 것이 맞습니다. 이 용어들을 아직 몰라도 앞 단계 실습을 진행하는 데 문제없습니다.
 
 ## 11.1 단순한 복사본이 아니다
 
@@ -1089,6 +1254,18 @@ ch13-agent
 
 # 제14장. 실제 소스 실행 가이드
 
+## 14.0 실행 환경 용어 주해
+
+> **초보자 주해 — 실행 환경**
+>
+> - **JDK 21**: Java 소스를 컴파일하고 실행하는 개발 도구
+> - **Gradle Wrapper**: Gradle을 별도 설치하지 않아도 프로젝트가 정한 버전으로 빌드하게 해 주는 파일(`gradlew`, `gradlew.bat`)
+> - **Docker**: DB 같은 실행 환경을 격리된 컨테이너로 띄우는 도구
+> - **PGVector**: PostgreSQL에서 Vector 검색을 할 수 있게 해 주는 확장
+> - **port**: 한 컴퓨터 안에서 여러 서버를 구분하는 번호. 이 저장소에서는 주로 Host 8080, MCP Server 8081, PostgreSQL 5432를 사용
+>
+> 오류가 발생하면 소스부터 고치지 말고 **Java 버전 → 환경변수 → Docker → 포트 → 애플리케이션 로그** 순서로 확인하는 것이 좋습니다.
+
 ## 14.1 공통 환경
 
 | 항목 | 현재 소스 |
@@ -1144,6 +1321,12 @@ chmod +x gradlew
 ---
 
 ## 14.4 환경변수
+
+> **초보자 주해 — 환경변수**
+>
+> API Key를 Java 코드나 `application.properties`에 직접 적어 GitHub에 올리면 키가 노출될 수 있습니다. 환경변수는 운영체제가 값을 보관하고 애플리케이션이 실행될 때 읽도록 하는 방식입니다.
+>
+> 예를 들어 `${OPENAI_API_KEY}`는 **“OPENAI_API_KEY라는 환경변수의 값을 여기에 넣어라”**라는 뜻입니다.
 
 Windows:
 
