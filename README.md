@@ -3,7 +3,7 @@
 > 본 문서는 「[인공지능] Spring AI Tool 호출 및 MCP Server 개발」 과정안내서와 수업 흐름을 바탕으로 재구성한 학습 교재입니다.  
 > 원 수업의 핵심 순서인 **Tool Calling → STDIO MCP Server → WebMVC/WebFlux 기반 MCP → 파일 시스템 → 인터넷 검색 → 비전 Tool**을 유지하되, 초보자가 개념과 코드의 연결 관계를 이해할 수 있도록 학습 순서를 세분화했습니다.
 >
-> **검토 기준:** 과정안내서의 수업 구성은 그대로 보존하고, 기술 설명은 2026-09-12 기준 Spring AI 공식 문서(2.0.1)를 함께 확인해 보완했습니다. 특히 원 수업의 SSE 예제는 학습 대상으로 유지하되, 현재 Spring AI 2.0 계열에서는 SSE transport가 deprecated이며 새 프로젝트에는 Streamable HTTP 사용이 권장된다는 점을 별도로 표시했습니다.
+> **현재 저장소 기준:** 과정안내서에는 SSE 통신이 포함되어 있지만, `projects-spring-ai-2.0`의 실제 WebMVC/WebFlux MCP 소스는 `STREAMABLE` 프로토콜과 `streamable-http` 연결 설정을 사용합니다. 따라서 이 README는 과정의 의도는 유지하되, 실행과 코드 설명은 현재 `main` 브랜치의 실제 소스를 우선 기준으로 합니다.
 
 ---
 
@@ -150,1085 +150,967 @@ Tool Calling과 MCP는 단순한 API 호출 문법이 아니라 AI 애플리케�
 
 ---
 
-# 제2장. Spring AI Tool Calling 기초
+# 제2장. 실제 소스로 시작하는 Spring AI Tool Calling
 
-## 2.1 첫 번째 Tool 만들기
+## 2.1 먼저 전체 구조를 본다
 
-가장 먼저 외부 API나 데이터베이스를 사용하지 않는 간단한 Java Tool부터 시작합니다.
+제11장 소스는 단순히 `@Tool` 하나만 보여주는 예제가 아닙니다. 하나의 Spring Boot 프로젝트 안에서 Tool Calling의 난이도를 단계적으로 높일 수 있도록 여러 예제가 함께 들어 있습니다.
 
-### 개념 예제
+```text
+ch11-tool-calling/
+└── src/main/java/com/example/demo/
+    ├── datetime/
+    ├── heatingsystem/
+    ├── recommendmovie/
+    ├── exceptionhandling/
+    ├── boombarrier/
+    ├── filesystem/
+    ├── toolsearch/
+    └── internetsearch/
+```
+
+처음부터 모든 패키지를 한꺼번에 이해하려고 하면 난이도가 급격히 올라갑니다. 실제 학습은 다음 순서가 적절합니다.
+
+① `datetime` — 가장 단순한 Tool 등록과 호출  
+② `heatingsystem` — Tool 파라미터와 `ToolContext`  
+③ `recommendmovie` — 여러 Tool과 `returnDirect`  
+④ `exceptionhandling` — Tool 실행 예외  
+⑤ `boombarrier` — 이미지 + 여러 Tool 조합  
+⑥ `filesystem` — 상태가 있는 대화 + 파일 Tool  
+⑦ `toolsearch` — Tool이 많아졌을 때 필요한 Tool Search  
+⑧ `internetsearch` — 외부 API를 사용하는 Tool
+
+---
+
+## 2.2 가장 먼저 볼 코드: DateTimeTools
+
+실제 소스:
 
 ```java
-import java.time.LocalDateTime;
-import org.springframework.ai.tool.annotation.Tool;
-
+@Component
 public class DateTimeTools {
 
-    @Tool(description = "현재 날짜와 시간을 조회합니다.")
-    public String getCurrentDateTime() {
-        return LocalDateTime.now().toString();
-    }
-}
-```
-
-여기서 중요한 부분은 `@Tool`입니다.
-
-평범한 Java 메서드에 Tool 정보를 제공하면 Spring AI가 LLM에게 이 메서드의 존재와 사용 목적을 알려줄 수 있습니다.
-
----
-
-## 2.2 Tool description이 중요한 이유
-
-다음 두 코드를 비교해 봅니다.
-
-### 좋지 않은 예
-
-```java
-@Tool(description = "검색")
-public String search(String query) {
+  @Tool(description = "현재 날짜와 시간 정보를 제공합니다.")
+  public String getCurrentDateTime() {
     ...
-}
-```
+  }
 
-### 개선된 예
-
-```java
-@Tool(
-    description = "사용자의 질문에 최신 인터넷 정보가 필요한 경우 웹을 검색합니다."
-)
-public String search(String query) {
+  @Tool(description = "지정된 시간에 알람을 설정합니다.")
+  public void setAlarm(
+      @ToolParam(description = "ISO-8601 형식의 시간", required = true)
+      String time) {
     ...
-}
-```
-
-LLM은 Tool 이름만 보는 것이 아니라 Tool 설명을 이용해 어떤 상황에서 이 Tool을 사용할지 판단합니다.
-
-따라서 Tool 설명은 단순한 주석이 아닙니다.
-
-### Tool 설명 작성 원칙
-
-1. Tool이 무엇을 하는지 명확하게 적는다.
-2. 언제 사용해야 하는지 설명한다.
-3. 다른 Tool과 역할이 겹치지 않도록 한다.
-4. 지나치게 짧거나 모호한 표현을 피한다.
-
----
-
-## 2.3 Tool 파라미터 이해
-
-Tool이 입력값을 받는 경우 LLM은 각 파라미터의 의미와 필수 여부도 알아야 합니다. Spring AI에서는 `@ToolParam`을 사용해 파라미터 설명을 명확하게 전달할 수 있습니다.
-
-```java
-import org.springframework.ai.tool.annotation.Tool;
-import org.springframework.ai.tool.annotation.ToolParam;
-
-public class SearchTools {
-
-    @Tool(description = "사용자의 질문에 최신 인터넷 정보가 필요한 경우 웹을 검색합니다.")
-    public String search(
-            @ToolParam(description = "검색할 질문") String query) {
-        // 실제 검색 API 호출
-        return "...";
-    }
-}
-```
-
-Spring AI는 메서드의 파라미터 정보를 바탕으로 LLM에 전달할 JSON Schema를 생성합니다. 개념적으로는 다음과 같은 구조입니다.
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "query": {
-      "type": "string",
-      "description": "검색할 질문"
-    }
-  },
-  "required": ["query"]
-}
-```
-
-LLM은 Tool 이름과 설명, 입력 JSON Schema를 함께 보고 어떤 Tool을 어떤 인자로 호출할지 결정합니다. Spring AI에서 Tool 파라미터는 기본적으로 필수이며, 선택 항목이 필요하면 `@ToolParam(required = false)` 등으로 명시합니다.
-
----
-
-## 2.4 Tool Calling 전체 흐름
-
-사용자가 다음과 같이 질문한다고 가정합니다.
-
-```text
-현재 시간을 알려줘.
-```
-
-실행 과정은 다음과 같습니다.
-
-① 사용자가 Spring AI 애플리케이션에 질문을 보낸다.  
-② Spring AI는 질문과 사용 가능한 Tool 정보를 LLM에게 전달한다.  
-③ LLM은 현재 시간이 필요하므로 시간 조회 Tool을 선택한다.  
-④ LLM은 Tool 호출에 필요한 인자를 생성한다.  
-⑤ Spring AI가 실제 Java 메서드를 실행한다.  
-⑥ Tool 실행 결과를 LLM에게 다시 전달한다.  
-⑦ LLM이 실행 결과를 자연어 문장으로 정리한다.  
-⑧ 최종 응답을 사용자에게 반환한다.
-
----
-
-# 제3장. Tool Calling 내부 구조 이해
-
-## 3.1 Tool은 세 가지 정보로 이해하면 쉽다
-
-Tool은 크게 다음 세 요소로 구성됩니다.
-
-```text
-Tool 이름
-   +
-Tool 설명
-   +
-입력 파라미터 구조
-```
-
-LLM은 이 정보를 바탕으로 Tool 사용 여부를 판단합니다.
-
----
-
-## 3.2 Tool Definition과 JSON Schema
-
-Tool을 LLM에게 전달하려면 LLM이 이해할 수 있는 구조화된 정보가 필요합니다.
-
-예를 들어 Java 코드가 다음과 같다고 가정합니다.
-
-```java
-public String getWeather(String city)
-```
-
-LLM에게는 개념적으로 다음과 같은 정보가 전달됩니다.
-
-```json
-{
-  "name": "getWeather",
-  "description": "지정한 도시의 날씨를 조회합니다.",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "city": {
-        "type": "string",
-        "description": "날씨를 조회할 도시 이름"
-      }
-    },
-    "required": ["city"]
   }
 }
 ```
 
-이 구조를 이해하면 Tool Calling이 마법처럼 동작하는 기능이 아니라, **LLM과 애플리케이션이 구조화된 정보를 주고받는 과정**이라는 점을 이해할 수 있습니다.
+이 예제에서 먼저 확인할 것은 세 가지입니다.
+
+- `@Component`: Spring Bean으로 등록
+- `@Tool`: LLM에게 사용할 수 있는 Tool로 설명
+- `@ToolParam`: LLM에게 파라미터의 의미를 설명
+
+`@Tool`을 붙였다고 자동으로 모든 ChatClient가 이 Tool을 사용하는 것은 아닙니다. 실제 연결은 Service에서 합니다.
 
 ---
 
-## 3.3 여러 Tool을 제공하면 어떻게 되는가
+## 2.3 DateTimeService에서 Tool을 LLM에 연결한다
 
-다음과 같은 Tool이 있다고 가정합니다.
-
-```text
-getCurrentTime()
-getWeather(city)
-searchWeb(query)
-readFile(path)
-```
-
-사용자가 질문할 때 LLM은 질문의 의도와 각 Tool의 설명을 비교합니다.
-
-예를 들어,
-
-```text
-서울의 오늘 날씨는 어때?
-```
-
-라는 질문에서는 `getWeather`가 선택될 가능성이 높습니다.
-
-반면,
-
-```text
-오늘 발표된 Spring AI 관련 소식을 찾아줘.
-```
-
-라는 질문에서는 최신 정보가 필요하므로 `searchWeb` 같은 검색 Tool이 더 적절합니다.
-
-따라서 Tool이 많아질수록 Tool 이름과 설명의 품질이 중요해집니다.
-
----
-
-## 3.4 초보자가 자주 혼동하는 부분
-
-### (1) LLM이 Java 메서드를 직접 실행하는가?
-
-아닙니다. LLM은 Tool 호출 요청을 생성하고 실제 실행은 애플리케이션이 담당합니다.
-
-### (2) Tool은 반드시 외부 API여야 하는가?
-
-아닙니다. 단순한 Java 메서드도 Tool이 될 수 있습니다.
-
-### (3) 모든 질문에서 Tool이 실행되는가?
-
-아닙니다. 질문 내용과 Tool 설명을 바탕으로 LLM이 Tool 사용 필요성을 판단합니다.
-
----
-
-# 제4장. MCP 기본 개념
-
-## 4.1 MCP의 핵심 역할
-
-MCP를 처음 접하면 프로토콜, Client, Server, STDIO, SSE 같은 용어 때문에 어렵게 느껴질 수 있습니다.
-
-핵심은 단순합니다.
-
-> MCP는 AI 애플리케이션이 외부 기능을 일정한 방식으로 발견하고 호출하도록 연결하는 프로토콜이다.
-
-MCP는 Client/Server 구조를 사용하며 메시지 교환은 JSON-RPC 기반으로 이루어집니다. 초보 단계에서는 먼저 **Host → MCP Client → MCP Server → Tool**의 역할 구분을 이해하는 것이 중요합니다.
-
----
-
-## 4.2 MCP 주요 구성 요소
-
-### MCP Host
-
-사용자와 상호작용하는 AI 애플리케이션입니다.
-
-예:
-
-```text
-Spring Boot + Spring AI 애플리케이션
-```
-
-### MCP Client
-
-MCP Server와 통신하는 구성 요소입니다.
-
-Host 내부에서 외부 MCP Server와 연결을 담당합니다.
-
-### MCP Server
-
-외부 Tool을 제공하는 서버 또는 프로세스입니다.
-
-예:
-
-```text
-파일 시스템 MCP Server
-검색 MCP Server
-데이터베이스 MCP Server
-업무 시스템 MCP Server
-```
-
----
-
-## 4.3 MCP 전체 구조
-
-```mermaid
-flowchart LR
-    U[사용자] --> H[Spring AI Host]
-    H --> L[LLM]
-    H --> C[MCP Client]
-    C --> S[MCP Server]
-    S --> T1[File Tool]
-    S --> T2[Search Tool]
-    S --> T3[Business Tool]
-```
-
----
-
-## 4.4 MCP Tool 호출 흐름
-
-MCP Tool 호출은 다음 흐름으로 이해하면 됩니다.
-
-① MCP Client가 MCP Server에 연결한다.  
-② Client가 Server에서 제공하는 Tool 목록을 확인한다.  
-③ 사용자가 질문한다.  
-④ LLM이 필요한 Tool을 판단한다.  
-⑤ MCP Client가 MCP Server에 Tool 실행을 요청한다.  
-⑥ MCP Server가 실제 Tool을 실행한다.  
-⑦ 실행 결과를 MCP Client에 반환한다.  
-⑧ 결과가 LLM에게 전달된다.  
-⑨ LLM이 최종 답변을 생성한다.
-
----
-
-# 제5장. STDIO 기반 MCP Server
-
-## 5.1 STDIO란 무엇인가
-
-STDIO는 Standard Input/Output의 약자로 표준 입력과 표준 출력을 뜻합니다.
-
-STDIO 방식에서는 MCP Client와 MCP Server가 표준 입력(stdin)과 표준 출력(stdout)을 이용해 메시지를 주고받습니다. 일반적인 로컬 구성에서는 Host 애플리케이션이 MCP Server 프로세스를 실행하거나 이미 준비된 로컬 프로세스와 연결합니다. 핵심은 네트워크 포트가 아니라 표준 입출력 스트림을 통신 채널로 사용한다는 점입니다.
-
-```text
-Spring AI Application
-        │
-        │ MCP Client
-        │
-        ├──── stdin ────▶ MCP Server Process
-        │
-        ◀─── stdout ─────
-```
-
----
-
-## 5.2 STDIO 방식을 먼저 배우는 이유
-
-STDIO는 네트워크 서버 설정 없이 MCP의 Client/Server 구조를 이해하기 좋습니다.
-
-학습자는 먼저 다음 내용을 확인할 수 있습니다.
-
-- MCP Client와 MCP Server의 역할이 분리된다는 점
-- 로컬 구성에서 Client가 Server 프로세스를 실행하거나 연결할 수 있다는 점
-- Tool 목록을 Server에서 가져올 수 있다는 점
-- Tool 실행 결과가 다시 Client로 전달된다는 점
-
----
-
-## 5.3 STDIO에서 로그 출력 주의
-
-STDIO에서는 표준 출력이 통신 채널로 사용될 수 있습니다.
-
-따라서 MCP 메시지와 무관한 콘솔 출력이 섞이지 않도록 주의해야 합니다.
-
-좋지 않은 예:
+실제 `DateTimeService`의 핵심은 다음입니다.
 
 ```java
-System.out.println("MCP Server 시작");
+String answer = this.chatClient.prompt()
+    .user(question)
+    .tools(dateTimeTools)
+    .call()
+    .content();
 ```
 
-STDOUT을 통신에 사용하는 환경에서는 일반 로그를 별도 로깅 경로로 분리해야 합니다.
-
----
-
-## 5.4 STDIO 실습에서 반드시 확인할 것
-
-① MCP Server가 정상적으로 실행되는가?  
-② MCP Client가 Server에 연결되는가?  
-③ Client가 Tool 목록을 확인할 수 있는가?  
-④ LLM이 MCP Tool을 선택하는가?  
-⑤ Tool 실행 결과가 최종 응답에 반영되는가?
-
----
-
-# 제6장. Web 기반 MCP Server
-
-## 6.1 왜 Web 방식이 필요한가
-
-STDIO는 같은 컴퓨터에서 실행되는 로컬 프로세스를 연결하기 좋습니다.
-
-그러나 실제 서비스에서는 MCP Server를 별도의 서버로 운영해야 하는 경우가 많습니다.
+실행 흐름:
 
 ```text
-AI Application
-      │
-      │ Network
-      ▼
-MCP Server
-      │
-      ├─ Search
-      ├─ File
-      ├─ Database
-      └─ Business API
+브라우저
+   ↓
+DateTimeController
+   ↓
+DateTimeService
+   ↓
+ChatClient
+   ↓
+.tools(dateTimeTools)
+   ↓
+LLM이 Tool 필요 여부 판단
+   ↓
+DateTimeTools 실행
+   ↓
+Tool 결과를 이용해 최종 답변 생성
 ```
-
-이 구조에서는 MCP Server를 여러 AI 애플리케이션이 공통으로 사용할 수 있습니다.
 
 ---
 
-## 6.2 원 수업의 SSE와 현재 권장 방식
+## 2.4 첫 번째 실행 실습
 
-과정안내서에서는 다음 두 가지 Spring 기반 SSE 구현을 다룹니다.
+제11장 프로젝트를 실행한 뒤 다음 페이지를 엽니다.
 
-1. WebMVC 기반 SSE MCP Server
-2. WebFlux 기반 SSE MCP Server
+```text
+http://localhost:8080/date-time-tools
+```
 
-이 내용은 **원 수업의 학습 흐름**이므로 그대로 이해할 필요가 있습니다. 다만 2026-09-12 기준 Spring AI 2.0.1 공식 문서에서는 SSE transport가 2.0.0부터 deprecated로 표시되어 있으며, 새 프로젝트에는 **Streamable HTTP** 사용을 권장합니다.
+처음에는 Tool이 반드시 필요한 질문으로 테스트합니다.
 
-따라서 교재에서는 다음과 같이 구분합니다.
+```text
+지금 몇 시야?
+오늘 날짜는?
+현재 시간에서 10분 뒤로 알람을 설정해줘.
+```
 
-| 구분 | 학습 목적 |
+학습 포인트는 “LLM이 답을 알고 있는가”가 아니라 **질문을 보고 Tool을 선택했는가**입니다.
+
+---
+
+# 제3장. Tool Calling 난이도를 단계적으로 올리기
+
+## 3.1 1단계 — 단순 Tool에서 파라미터 Tool로
+
+`DateTimeTools.setAlarm()`은 `String time`을 받습니다. `@ToolParam`은 LLM에게 인자의 의미와 필수 여부를 전달합니다.
+
+```java
+@ToolParam(
+    description = "ISO-8601 형식의 시간",
+    required = true
+)
+String time
+```
+
+---
+
+## 3.2 2단계 — HeatingSystemTools와 ToolContext
+
+`HeatingSystemTools`는 사용자 질문 외의 애플리케이션 내부 정보를 Tool에 전달하는 예제입니다.
+
+Service:
+
+```java
+.tools(heatingSystemTools)
+.toolContext(Map.of("controlKey", "heatingSystemKey"))
+```
+
+Tool:
+
+```java
+public String startHeatingSystem(
+    int targetTemperature,
+    ToolContext toolContext) {
+
+  String controlKey =
+      (String) toolContext.getContext().get("controlKey");
+  ...
+}
+```
+
+다음 두 정보의 차이를 이해합니다.
+
+```text
+사용자가 말한 값
+    ↓
+LLM이 Tool 인자로 생성
+
+애플리케이션 내부 제어 정보
+    ↓
+ToolContext로 전달
+```
+
+브라우저:
+
+```text
+http://localhost:8080/heating-system-tools
+```
+
+추천 질문:
+
+```text
+현재 온도를 확인하고 24도가 되도록 난방을 조절해줘.
+```
+
+---
+
+## 3.3 3단계 — RecommendMovieTools와 returnDirect
+
+실제 `RecommendMovieTools`에는 다음 두 Tool이 있습니다.
+
+```java
+@Tool(description = "사용자가 관람한 영화 목록을 제공합니다.")
+public List<String> getMovieListByUserId(...)
+
+@Tool(
+  description = "주어진 쟝르의 추천 영화 목록을 제공합니다.",
+  returnDirect = true
+)
+public List<String> recommendMovie(...)
+```
+
+`returnDirect = true`가 있는 Tool과 일반 Tool의 응답 흐름을 비교하는 예제입니다.
+
+브라우저:
+
+```text
+http://localhost:8080/recommend-movie-tools
+```
+
+---
+
+## 3.4 4단계 — Tool 실행 예외 처리
+
+`exceptionhandling.RecommendMovieTools`의 `getMovieListByUserId()`는 의도적으로 다음 예외를 발생시킵니다.
+
+```java
+throw new RuntimeException("사용자 ID가 존재하지 않습니다.");
+```
+
+`ExceptionHandlingConfig`에는 예외 처리용 Bean 코드가 있지만 현재 `@Bean`이 주석 처리되어 있습니다.
+
+```java
+// @Bean
+ToolExecutionExceptionProcessor toolExecutionExceptionProcessor() {
+  return new DefaultToolExecutionExceptionProcessor(true);
+}
+```
+
+`application.properties`의 다음 설정도 주석 상태입니다.
+
+```properties
+# spring.ai.tools.throw-exception-on-error=true
+```
+
+따라서 이 예제는 **예외 처리 방식을 켜고 끄면서 비교하기 위한 실습 코드**로 이해하는 것이 정확합니다.
+
+브라우저:
+
+```text
+http://localhost:8080/exception-handling
+```
+
+---
+
+## 3.5 5단계 — 이미지와 여러 Tool을 연결하는 BoomBarrier
+
+`BoomBarrierService`는 이미지를 `Media`로 만들고 두 종류의 Tool을 함께 제공합니다.
+
+```java
+.tools(carCheckTools, boomBarrierTools)
+```
+
+| 클래스 | 역할 |
 |---|---|
-| SSE | 수업 소스 이해 및 기존 MCP 전송 방식 학습 |
-| Streamable HTTP | 현재 Spring AI 2.0 계열에서 권장되는 HTTP 전송 방식 |
-| Stateless | 세션 상태를 유지하지 않는 단순한 배포 구조가 필요한 경우 |
+| `CarCheckTools` | 인식된 차량 번호가 등록 차량인지 확인 |
+| `BoomBarrierTools` | 차단기 올림/내림 |
+| `BoomBarrierService` | 이미지와 단계별 프롬프트를 LLM에 전달 |
 
-핵심 개념은 같습니다. 먼저 **Client와 Server가 네트워크로 분리된다**는 구조를 이해하고, 그 다음 전송 방식의 차이를 구분합니다.
+실제 흐름:
+
+```text
+차량 이미지
+   ↓
+LLM이 번호판 인식
+   ↓
+checkCarNumber()
+   ↓
+등록 차량 여부
+   ↓
+boomBarrierUp() 또는 boomBarrierDown()
+   ↓
+최종 결과
+```
+
+브라우저:
+
+```text
+http://localhost:8080/boom-barrier-tools
+```
 
 ---
 
-## 6.3 Spring AI 2.0 계열의 Streamable HTTP
+## 3.6 6단계 — FileSystemTools와 ChatMemory
 
-WebMVC 기반 MCP Server에서는 다음 starter를 사용할 수 있습니다.
+`FileSystemTools`는 디렉터리 조회, 생성, 파일 생성, 읽기, 삭제, 이동/이름변경 기능을 제공합니다.
 
-```xml
-<dependency>
-    <groupId>org.springframework.ai</groupId>
-    <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
-</dependency>
+기준 디렉터리:
+
+```java
+Path home = Paths.get(System.getProperty("user.home"));
+this.rootDirectory =
+    home.resolve("Documents/ch11-tool-calling");
 ```
 
-Streamable HTTP를 사용할 때 서버 설정의 핵심은 다음과 같습니다.
+따라서 실제 파일 작업 범위는 다음입니다.
+
+```text
+~/Documents/ch11-tool-calling
+```
+
+`FileSystemService`는 `MessageChatMemoryAdvisor`를 사용하고 Controller의 HTTP Session ID를 대화 ID로 넘깁니다.
+
+```java
+.defaultAdvisors(
+  MessageChatMemoryAdvisor.builder(chatMemory).build()
+)
+```
+
+```java
+fileSystemService.chat(question, session.getId())
+```
+
+브라우저:
+
+```text
+http://localhost:8080/file-system-tools
+```
+
+추천 실습 순서:
+
+① 현재 폴더의 파일 목록 조회  
+② `study` 디렉터리 생성  
+③ `study/memo.txt` 생성  
+④ 파일 내용 읽기  
+⑤ 파일 이름 변경
+
+### 현재 소스 주의점
+
+`resolve(String relativePath)`는 빈 값일 때 rootDirectory를 대입한 뒤 다시 `rootDirectory.resolve(relativePath)`를 수행합니다. `relativePath`가 실제 `null`로 들어오면 예외가 발생할 수 있습니다.
+
+따라서 실습에서는 가능하면 `.`, 파일명, 디렉터리명처럼 경로를 명시적으로 주는 것이 안전합니다.
+
+---
+
+## 3.7 7단계 — Tool Search
+
+현재 `ToolSearchService`는 다음 Tool을 기본 Tool로 등록합니다.
+
+```java
+.defaultTools(dateTimeTools, recommendMovieTools)
+```
+
+세션마다 다음 값을 Advisor에 전달합니다.
+
+```java
+.advisors(advisorSpec -> advisorSpec
+    .param(ChatMemory.CONVERSATION_ID, sessionId)
+    .param("tool-search-id", sessionId)
+)
+```
+
+두 프로젝트의 설정 차이:
+
+### ch11-tool-calling-basic
+
+```properties
+spring.ai.chat.client.tool-search-advisor.enabled=true
+spring.ai.chat.client.tool-search-advisor.tool-index-type=regex
+```
+
+### ch11-tool-calling
+
+```properties
+spring.ai.chat.client.tool-search-advisor.enabled=true
+spring.ai.chat.client.tool-search-advisor.tool-index-type=vector
+```
+
+`ToolSearchConfig`는 Tool 검색용 PGVector 테이블을 구성합니다.
+
+```text
+spring_ai_tool_search_vector_store
+```
+
+임베딩 차원은 실제 코드에서 3072입니다.
+
+브라우저:
+
+```text
+http://localhost:8080/tool-search
+```
+
+---
+
+## 3.8 8단계 — 현재 ch11의 InternetSearch 상태
+
+`ch11-tool-calling`에는 `InternetSearchController`, `InternetSearchService`, `InternetSearchTools`가 존재하지만 Bean 애노테이션이 현재 주석 처리되어 있습니다.
+
+```java
+//@RestController
+//@Service
+//@Component
+```
+
+따라서 현재 소스 그대로는 `/internet-search-tools`의 직접 검색 REST 기능이 활성화되지 않습니다.
+
+실행 가능한 인터넷 검색 Tool은 제12장의 MCP Server 버전을 먼저 사용하는 것이 자연스럽습니다.
+
+---
+
+# 제4장. 내부 Tool에서 MCP Tool로 넘어가기
+
+## 4.1 핵심 차이
+
+제11장:
+
+```java
+@Tool
+public String getCurrentDateTime() { ... }
+```
+
+제12장:
+
+```java
+@McpTool
+public String getCurrentDateTime() { ... }
+```
+
+파라미터도 `@ToolParam`에서 `@McpToolParam`으로 바뀝니다.
+
+핵심 로직보다 **Tool이 존재하는 위치와 연결 방식이 달라지는 것**이 중요합니다.
+
+---
+
+## 4.2 구조 비교
+
+| 구분 | 제11장 | 제12장 |
+|---|---|---|
+| Tool 위치 | Host 애플리케이션 내부 | 별도 MCP Server |
+| 애노테이션 | `@Tool` | `@McpTool` |
+| 연결 | `.tools(...)` | `ToolCallbackProvider` |
+| 통신 | 같은 애플리케이션 | STDIO 또는 HTTP |
+
+---
+
+## 4.3 ToolCallbackProvider
+
+STDIO Host와 WebMVC Host의 `AiService`는 다음 구조를 사용합니다.
+
+```java
+public AiService(
+    ChatClient.Builder chatClientBuilder,
+    ToolCallbackProvider toolCallbackProvider) {
+
+  this.chatClient = chatClientBuilder
+      .defaultTools(toolCallbackProvider)
+      .build();
+}
+```
+
+```text
+MCP Server
+   ↓
+MCP Client
+   ↓
+ToolCallbackProvider
+   ↓
+ChatClient
+   ↓
+LLM
+```
+
+---
+
+# 제5장. STDIO MCP Server를 실제 소스로 이해하기
+
+## 5.1 프로젝트 구성
+
+```text
+ch12-stdio-mcp-host
+ch12-stdio-mcp-server-datetime
+ch12-stdio-mcp-server-boombarrier
+ch12-stdio-mcp-server-filesystem
+ch12-stdio-mcp-server-internetsearch
+```
+
+---
+
+## 5.2 Server 설정
+
+datetime server의 실제 설정:
+
+```properties
+spring.ai.mcp.server.stdio=true
+spring.main.web-application-type=none
+spring.main.banner-mode=off
+spring.ai.mcp.server.type=SYNC
+```
+
+웹 포트가 아니라 stdin/stdout으로 통신합니다.
+
+---
+
+## 5.3 Host가 Server JAR을 실행한다
+
+Host:
+
+```properties
+spring.ai.mcp.client.stdio.servers-configuration=classpath:mcp-servers.json
+spring.ai.mcp.client.type=SYNC
+```
+
+`mcp-servers.json`:
+
+```json
+{
+  "command": "java",
+  "args": [
+    "-jar",
+    "C:/spring-ai-course/.../ch12-stdio-mcp-server-datetime-0.0.1-SNAPSHOT.jar"
+  ]
+}
+```
+
+올바른 순서:
+
+① Server들을 `bootJar`로 빌드  
+② `mcp-servers.json` 경로 수정  
+③ Host 실행  
+④ Host가 Server 프로세스 실행
+
+---
+
+## 5.4 STDIO 테스트 순서
+
+① 현재 날짜/시간  
+② FileSystem  
+③ Internet Search  
+④ Boom Barrier
+
+이 순서가 좋은 이유는 가장 단순한 Tool부터 연결 상태를 확인할 수 있기 때문입니다.
+
+---
+
+# 제6장. 현재 소스의 WebMVC Streamable HTTP MCP
+
+## 6.1 과정안내서와 실제 코드를 구분한다
+
+과정안내서에는 SSE 통신 MCP가 포함되어 있지만 현재 GitHub 소스는 다음 설정을 사용합니다.
+
+Server:
 
 ```properties
 spring.ai.mcp.server.protocol=STREAMABLE
+server.port=8081
 ```
 
-WebFlux를 사용하는 경우에는 WebFlux용 MCP Server starter를 사용합니다.
-
-> **주의:** 수업 소스가 SSE를 기준으로 작성되어 있다면 실습 중에는 강의 소스의 설정을 우선합니다. 교재의 Streamable HTTP 설명은 현재 기술 흐름을 이해하기 위한 보완 내용입니다.
-
----
-
-# 제7장. WebMVC와 WebFlux 이해
-
-## 7.1 WebMVC
-
-WebMVC는 전통적인 Spring MVC 기반 웹 애플리케이션 구조입니다.
-
-초보자는 먼저 WebMVC 기반 MCP Server에서 다음 흐름을 이해하는 것이 좋습니다.
-
-```text
-MCP Client
-   ↓
-HTTP 요청
-   ↓
-Spring MVC
-   ↓
-MCP Server
-   ↓
-Tool 실행
-   ↓
-결과 반환
-```
-
----
-
-## 7.2 WebFlux
-
-WebFlux는 Reactive Programming 모델을 사용하는 Spring의 비동기 웹 스택입니다.
-
-Tool Calling과 MCP를 처음 배우는 단계에서는 WebFlux 문법 자체보다 다음 차이를 이해하는 데 집중합니다.
-
-| 구분 | WebMVC | WebFlux |
-|---|---|---|
-| 프로그래밍 모델 | 전통적 요청/응답 | Reactive |
-| 대표 타입 | 일반 객체 | Mono, Flux |
-| 학습 난이도 | 상대적으로 낮음 | 상대적으로 높음 |
-| 권장 학습 순서 | 먼저 학습 | 이후 확장 |
-
----
-
-## 7.3 교재에서의 학습 순서
-
-```text
-WebMVC MCP 이해
-        ↓
-MCP Client와 Server 연결 확인
-        ↓
-Tool 호출 성공 확인
-        ↓
-WebFlux 구조 비교
-        ↓
-Reactive 방식 확장
-```
-
-두 방식을 처음부터 동시에 외우기보다 WebMVC에서 MCP 구조를 이해한 뒤 WebFlux로 확장하는 것이 좋습니다.
-
----
-
-# 제8장. 로컬 파일 시스템 Tool
-
-## 8.1 파일 시스템 Tool의 목적
-
-파일 시스템 Tool은 LLM이 직접 파일을 읽는 것이 아니라 애플리케이션이 파일 관련 기능을 제공하고 LLM이 필요한 Tool을 선택하게 하는 구조입니다.
-
-예:
-
-```text
-listFiles
-readFile
-writeFile
-searchFiles
-```
-
----
-
-## 8.2 파일 읽기 흐름
-
-```text
-사용자
- "report.txt 내용을 요약해줘"
-        ↓
-LLM
- "readFile Tool이 필요하다"
-        ↓
-File Tool
-        ↓
-파일 내용 반환
-        ↓
-LLM
-        ↓
-요약 결과
-```
-
----
-
-## 8.3 파일 Tool의 핵심 보안 원칙
-
-파일 Tool은 강력하지만 잘못 구현하면 위험합니다.
-
-반드시 다음 사항을 고려합니다.
-
-1. 접근 가능한 기준 디렉터리를 제한한다.
-2. 사용자가 입력한 경로를 그대로 신뢰하지 않는다.
-3. 상위 디렉터리 이동을 제한한다.
-4. 삭제 기능은 별도 권한으로 관리한다.
-5. 중요한 파일의 덮어쓰기를 방지한다.
-6. Tool 호출 기록을 남긴다.
-
----
-
-# 제9장. 인터넷 검색 Tool
-
-## 9.1 왜 검색 Tool이 필요한가
-
-LLM의 학습 데이터에는 최신 정보가 포함되지 않을 수 있습니다.
-
-인터넷 검색 Tool을 연결하면 다음과 같은 질문에 대응할 수 있습니다.
-
-```text
-오늘 발표된 기술 뉴스를 찾아줘.
-현재 환율을 검색해줘.
-최신 Spring AI 관련 정보를 찾아줘.
-```
-
----
-
-## 9.2 검색 Tool 구조
-
-```text
-사용자 질문
-    ↓
-LLM
-    ↓
-검색 필요 여부 판단
-    ↓
-Search Tool
-    ↓
-외부 검색 API
-    ↓
-검색 결과
-    ↓
-LLM
-    ↓
-최종 응답
-```
-
----
-
-## 9.3 검색 Tool 구현 시 확인할 부분
-
-- API Key는 환경변수로 관리한다.
-- 검색 API의 응답 형식을 확인한다.
-- 검색 결과가 비어 있는 경우를 처리한다.
-- 네트워크 오류를 처리한다.
-- 검색 결과 전체를 무조건 LLM에 전달하지 않는다.
-- 필요한 내용만 정리해서 전달한다.
-
-환경변수 사용 예:
+Host:
 
 ```properties
-app.search.api-key=${SEARCH_API_KEY}
+spring.ai.mcp.client.streamable-http.connections.tool-server.url=http://localhost:8081
+spring.ai.mcp.client.streamable-http.connections.tool-server.endpoint=/mcp
+spring.ai.mcp.client.type=SYNC
 ```
 
-API Key를 GitHub 저장소에 직접 커밋하지 않습니다.
+따라서 현재 저장소 실행 기준은 **Streamable HTTP**입니다.
 
 ---
 
-# 제10장. 비전을 활용한 제어 Tool
-
-## 10.1 Vision과 Tool Calling의 결합
-
-비전 모델은 이미지를 분석할 수 있습니다.
-
-여기에 Tool Calling을 결합하면 다음 구조를 만들 수 있습니다.
+## 6.2 WebMVC Server의 실제 Tool
 
 ```text
-이미지 입력
-   ↓
-Vision Model
-   ↓
-상태 판단
-   ↓
-필요한 Tool 선택
-   ↓
-외부 기능 실행
+DateTimeTools
+BoomBarrierTools
+CarCheckTools
+FileSystemTools
+InternetSearchTools
 ```
 
-예를 들어 이미지에서 특정 상태를 확인한 뒤 관련 제어 Tool을 호출하도록 설계할 수 있습니다.
+제11장의 내부 Tool을 MCP Server로 분리한 구조라고 보면 됩니다.
 
 ---
 
-## 10.2 핵심은 '판단'과 '실행'의 분리
+## 6.3 실행 흐름
 
 ```text
-Vision Model = 이미지 해석과 판단
-Tool         = 실제 기능 실행
+브라우저
+   ↓
+Host : 8080
+   ↓
+ChatClient
+   ↓
+ToolCallbackProvider
+   ↓
+Streamable HTTP
+   ↓
+MCP Server : 8081 /mcp
+   ↓
+@McpTool
 ```
-
-AI 모델이 직접 시스템을 제어하는 것으로 이해하면 안 됩니다.
-
-실제 작업은 애플리케이션의 Tool이 수행합니다.
 
 ---
 
-# 제11장. 종합 프로젝트
+## 6.4 SerpApi Key
 
-## 11.1 목표
+WebMVC MCP Server의 `InternetSearchTools`는 활성 Bean이며 `SERPAPI_API_KEY`를 주입받습니다. 현재 구성을 그대로 실행할 때 Server 환경에 SerpApi Key도 준비합니다.
 
-지금까지 학습한 내용을 하나의 AI 애플리케이션으로 연결합니다.
+---
 
-예를 들어 사용자가 다음과 같이 요청한다고 가정합니다.
+# 제7장. WebFlux MCP는 마지막에 학습한다
+
+## 7.1 WebMVC 다음에 WebFlux를 보는 이유
+
+WebFlux Host는 `String` 대신 `Flux<String>`을 반환하고 `stream()`을 사용합니다.
+
+```java
+return this.chatClient.prompt()
+    .user(question)
+    .stream()
+    .content();
+```
+
+WebFlux MCP Server의 Tool도 `Mono`를 사용합니다.
+
+```java
+@McpTool(...)
+public Mono<String> getCurrentDateTime() {
+  ...
+  return Mono.just(nowTime);
+}
+```
+
+---
+
+## 7.2 boundedElastic
+
+현재 Host 소스:
+
+```java
+return Flux.defer(() -> {
+    ...
+}).subscribeOn(Schedulers.boundedElastic());
+```
+
+소스 주석은 MCP Tool 호출 과정에 블로킹 작업이 있을 수 있으므로 이벤트 루프를 막지 않도록 별도 스레드에서 실행한다고 설명합니다.
+
+학습 순서:
 
 ```text
-오늘 작성한 보고서 파일을 찾아서 요약하고,
-관련된 최신 정보를 인터넷에서 검색한 다음
-결과를 새로운 파일로 저장해줘.
+WebMVC MCP
+   ↓
+Flux / Mono
+   ↓
+stream()
+   ↓
+블로킹 문제
+   ↓
+boundedElastic
 ```
 
-이 요청에는 여러 Tool이 필요합니다.
+---
+
+# 제8장. 실제 FileSystem Tool 분석
+
+## 8.1 Tool 목록
+
+| Tool | 역할 |
+|---|---|
+| `listFiles` | 디렉터리 조회 |
+| `createDir` | 디렉터리 생성 |
+| `createFile` | 파일 생성 |
+| `readFile` | 파일 읽기 |
+| `deletePath` | 파일/디렉터리 삭제 |
+| `moveFile` | 이동/이름 변경 |
+
+---
+
+## 8.2 경로 제한
+
+현재 코드는 다음 방식으로 rootDirectory 밖으로 나가는 경로를 제한합니다.
+
+```java
+path = rootDirectory.resolve(relativePath).normalize();
+
+if (!path.startsWith(rootDirectory)) {
+  path = rootDirectory;
+}
+```
+
+제11장 `@Tool` 구현과 제12장 `@McpTool` 구현의 핵심 파일 처리 로직은 거의 같습니다. 이 비교가 MCP를 이해하는 데 도움이 됩니다.
+
+---
+
+# 제9장. 실제 Internet Search Tool 분석
+
+## 9.1 두 개의 Tool
 
 ```text
-파일 검색
-   ↓
-파일 읽기
-   ↓
-내용 요약
-   ↓
-인터넷 검색
-   ↓
-결과 정리
-   ↓
-파일 저장
+search(query)
+  └─ SerpApi 호출
+  └─ 상위 3개 결과의 제목/URL/snippet 반환
+
+fetch(url)
+  └─ WebClient로 HTML 요청
+  └─ Jsoup으로 body 텍스트 추출
 ```
+
+검색과 본문 수집을 분리한 구조입니다.
 
 ---
 
-## 11.2 종합 구조
+## 9.2 실제 활성 위치
 
-```mermaid
-flowchart TD
-    U[사용자 요청] --> L[LLM]
-    L --> F1[File Search Tool]
-    F1 --> L
-    L --> F2[Read File Tool]
-    F2 --> L
-    L --> W[Web Search Tool]
-    W --> L
-    L --> F3[Write File Tool]
-    F3 --> L
-    L --> U
-```
+제11장 직접 검색 클래스는 Bean 애노테이션이 주석 상태입니다. 제12장 MCP Server의 `InternetSearchTools`는 `@Component`와 `@McpTool`이 활성화되어 있습니다.
+
+현재 소스 그대로 학습할 때는 MCP Internet Search를 실제 실행 대상으로 보는 것이 맞습니다.
 
 ---
 
-## 11.3 이 단계에서 Agent 개념과 연결된다
+# 제10장. 실제 Vision + Tool Calling 분석
 
-단일 Tool 호출은 비교적 단순합니다.
-
-그러나 하나의 목표를 해결하기 위해 모델이 상황을 판단하고 여러 Tool을 선택·반복 실행하도록 구성하면 Agentic Workflow로 확장할 수 있습니다. 단순히 Tool을 여러 개 등록했다고 해서 자동으로 Agent가 되는 것은 아닙니다.
+## 10.1 Boom Barrier 흐름
 
 ```text
-단일 질문
-   ↓
-단일 Tool
-   ↓
-복수 Tool
-   ↓
-Tool 선택과 반복
-   ↓
-Agentic Workflow
+이미지
+ ↓
+차량 번호 인식
+ ↓
+CarCheckTools.checkCarNumber()
+ ↓
+등록 여부
+ ├─ true  → boomBarrierUp()
+ └─ false → boomBarrierDown()
 ```
 
-Tool Calling과 MCP는 이후 AI Agent를 학습하기 위한 기반 기술입니다.
+학습 포인트:
+
+① `Media`로 이미지 입력  
+② 여러 Tool을 한 요청에 제공  
+③ Tool 결과를 다음 행동 판단에 이용  
+④ 최종 출력 형식을 프롬프트로 제한
 
 ---
 
-# 제12장. MCP와 Tool 개발 시 보안 및 운영 고려사항
+# 제11장. Annotation MCP 프로젝트는 고급 단계다
 
-## 12.1 API Key 관리
+## 11.1 단순한 복사본이 아니다
 
-다음과 같이 소스에 API Key를 직접 작성하면 안 됩니다.
+`ch12-webmvc-mcp-host-annotation`은 다음 기능을 포함합니다.
 
-```properties
-spring.ai.openai.api-key=sk-xxxx
+| 서비스 | 학습 내용 |
+|---|---|
+| `McpLoggingService` | Logging Notification |
+| `McpProgressService` | Progress Token |
+| `McpResourceService` | Resource / Resource Template / Completion |
+| `McpPromptService` | Prompt / Completion |
+| `McpSamplingService` | Sampling |
+| `McpElicitationService` | 사용자 승인/추가 입력 |
+| `McpToolChangedService` | Tool 목록과 동적 Tool 변경 |
+
+---
+
+## 11.2 Logging
+
+Server 쪽 DateTime Tool은 `McpSyncRequestContext`로 Client에 로그를 보냅니다.
+
+```java
+public String getCurrentDateTime(
+    McpSyncRequestContext context) {
+
+  context.info("getCurrentDateTime 도구 실행");
+  ...
+}
 ```
 
-환경변수를 사용합니다.
+---
+
+## 11.3 Resource와 Prompt
+
+`McpResourceService`:
+
+```text
+listResources()
+listResourceTemplates()
+readResource()
+completeCompletion()
+```
+
+`McpPromptService`:
+
+```text
+listPrompts()
+getPrompt()
+completeCompletion()
+```
+
+이 단계에서 MCP가 Tool만 제공하는 프로토콜이 아니라 Resource와 Prompt도 제공할 수 있다는 점을 확인합니다.
+
+---
+
+## 11.4 고급 기능 권장 순서
+
+① Logging  
+② Progress  
+③ Resource  
+④ Prompt  
+⑤ Sampling  
+⑥ Elicitation  
+⑦ Tool Changed
+
+`McpElicitationService`는 `taskId`를 `toolContext`로 전달하고 대기 요청과 승인 응답을 별도로 처리합니다. 기본 Tool Calling보다 난이도가 높으므로 마지막에 학습합니다.
+
+---
+
+# 제12장. 소스에서 확인되는 보안·운영 포인트
+
+## 12.1 Key 관리
+
+현재 소스는 다음 환경변수 방식을 사용합니다.
 
 ```properties
 spring.ai.openai.api-key=${OPENAI_API_KEY}
+serpapi.api-key=${SERPAPI_API_KEY}
 ```
 
 ---
 
-## 12.2 HTTP 기반 MCP Server의 인증·인가
+## 12.2 FileSystem Tool
 
-Spring AI의 HTTP 기반 MCP Server starter는 MCP endpoint에 인증·인가를 자동으로 적용하지 않습니다. 기본 상태로 외부 네트워크에 노출하면 접근 가능한 Client가 등록된 Tool, Resource, Prompt를 조회하거나 호출할 수 있습니다.
+`createFile`, `deletePath`, `moveFile`은 실제 파일을 변경합니다. 실습용 디렉터리를 개인 파일과 분리하는 것이 좋습니다.
 
-따라서 localhost를 넘어 배포할 때는 Spring Security 등의 보안 계층을 별도로 적용해야 합니다.
+---
+
+## 12.3 장치 제어 Tool
+
+Boom Barrier와 Heating System은 실습용 로직이지만 구조상 실제 장치 제어로 확장될 수 있습니다. 운영 환경에서는 인증, 권한, 입력 검증, 사용자 승인 같은 보호 계층을 추가해야 합니다.
+
+---
+
+## 12.4 URL fetch
+
+현재 `fetch(url)`은 전달된 URL을 직접 요청합니다. 운영 환경에서는 허용 도메인, 내부 주소 접근, 응답 크기, 타임아웃 등을 별도로 제한하는 것이 안전합니다.
+
+---
+
+# 제13장. 실제 소스 기준 권장 학습 순서
+
+## 13.1 단계 1 — Spring AI 기본기
 
 ```text
-외부 Client
+ch01-spring-ai-project
     ↓
-인증 / 인가
+ch02-chat-model-api
     ↓
-MCP Endpoint
+ch03-prompt
     ↓
-Tool 실행
+ch04-structured-output
+    ↓
+ch07-advisor
 ```
 
 ---
 
-## 12.3 위험도가 높은 Tool은 별도로 관리한다
+## 13.2 단계 2 — 데이터와 기억
 
-다음 Tool은 단순 조회 Tool보다 위험합니다.
+```text
+ch08-embedding-vector-store
+    ↓
+ch09-in-memory-chat-memory
+    ↓
+ch09-jdbc-chat-memory
+    ↓
+ch09-vector-store-chat-memory
+    ↓
+ch10-rag
+```
 
-- 파일 삭제
-- 데이터 수정
-- 이메일 전송
-- 결제
-- 운영 서버 명령 실행
-- 계정 및 권한 변경
-
-이러한 Tool에는 별도 승인 절차나 권한 검사가 필요합니다.
+이 구간부터 PostgreSQL/PGVector가 필요합니다.
 
 ---
 
-## 12.4 Tool 입력값 검증
-
-LLM이 생성한 인자를 그대로 신뢰해서는 안 됩니다.
+## 13.3 단계 3 — Tool Calling
 
 ```text
-LLM이 생성한 Tool Argument
-        ↓
-입력값 검증
-        ↓
-권한 확인
-        ↓
-실제 Tool 실행
+DateTime
+   ↓
+HeatingSystem
+   ↓
+RecommendMovie
+   ↓
+ExceptionHandling
+   ↓
+BoomBarrier
+   ↓
+FileSystem
+   ↓
+ToolSearch
 ```
 
 ---
 
-## 12.5 로그 관리
-
-운영 환경에서는 다음 정보를 기록하는 것이 좋습니다.
-
-- 어떤 사용자가 요청했는가
-- 어떤 Tool이 선택되었는가
-- 어떤 인자가 전달되었는가
-- Tool 실행이 성공했는가
-- 오류가 발생했는가
-- 실행 시간이 얼마나 걸렸는가
-
-민감정보는 로그에 그대로 기록하지 않습니다.
-
----
-
-# 제13장. 전체 학습 흐름 정리
-
-## 13.1 핵심 흐름
+## 13.4 단계 4 — MCP
 
 ```text
-Spring AI Chat
-    ↓
-Tool Calling
-    ↓
-Java Tool
-    ↓
-여러 Tool
-    ↓
-MCP 개념
-    ↓
-MCP Client / Server
-    ↓
 STDIO MCP
-    ↓
-Web 기반 MCP
-    ↓
-File Tool
-    ↓
-Search Tool
-    ↓
-Vision Tool
-    ↓
-복수 Tool 조합
-    ↓
-Agentic AI
+   ↓
+WebMVC Streamable HTTP
+   ↓
+WebFlux Streamable HTTP
+   ↓
+Annotation MCP 고급 기능
+   ↓
+ch13-agent
 ```
 
 ---
 
-## 13.2 반드시 기억할 핵심 문장
+# 제14장. 실제 소스 실행 가이드
 
-### Tool Calling
+## 14.1 공통 환경
 
-> LLM은 Tool을 직접 실행하는 것이 아니라 어떤 Tool을 어떤 인자로 사용할지 결정한다.
-
-### MCP
-
-> MCP는 AI 애플리케이션과 외부 Tool 제공 시스템을 표준적인 Client/Server 구조로 연결한다.
-
-### Agent
-
-> Agent는 목표를 해결하기 위해 상황을 판단하고 필요한 Tool을 선택하여 여러 단계를 수행한다.
-
----
-
-# 제14장. 실습 프로젝트 구성 및 실행 방법
-
-## 14.1 실제 소스 코드 위치
-
-현재 실행 가능한 Spring AI 2.0 실습 프로젝트는 `projects-spring-ai-2.0/` 아래에 장별로 정리되어 있습니다.
-
-```text
-projects-spring-ai-2.0/
-├── ch01-spring-ai-project
-├── ch02-chat-model-api
-├── ch03-prompt
-├── ch04-structured-output
-├── ch05-voice-chat
-├── ch06-vision-image-generation
-├── ch07-advisor
-├── ch08-embedding-vector-store
-├── ch09-in-memory-chat-memory
-├── ch09-jdbc-chat-memory
-├── ch09-vector-store-chat-memory
-├── ch10-rag
-├── ch11-tool-calling-basic
-├── ch11-tool-calling
-├── ch12-stdio-mcp-host
-├── ch12-stdio-mcp-server-boombarrier
-├── ch12-stdio-mcp-server-datetime
-├── ch12-stdio-mcp-server-filesystem
-├── ch12-stdio-mcp-server-internetsearch
-├── ch12-webmvc-mcp-host-annotation
-├── ch12-webmvc-mcp-host
-├── ch12-webmvc-mcp-server-annotation
-├── ch12-webmvc-mcp-server
-├── ch12-webflux-mcp-host
-├── ch12-webflux-mcp-server
-└── ch13-agent
-```
-
-부록 예제로 `appendix-chat-model-api-google-genai`, `appendix-chat-model-api-ollama`도 포함되어 있습니다.
-
----
-
-## 14.2 공통 실행 환경
-
-현재 소스의 `build.gradle`을 기준으로 주요 프로젝트는 다음 환경을 사용합니다.
-
-| 항목 | 기준 |
+| 항목 | 현재 소스 |
 |---|---|
-| Java | JDK 21 |
-| Build Tool | Gradle Wrapper |
+| Java | 21 |
 | Spring Boot | 4.1.0 |
 | Spring AI | 2.0.1 |
-| 일반 웹 프로젝트 포트 | 8080 |
-| MCP Server 포트 | 8081 |
-| PostgreSQL / PGVector | localhost:5432 |
-
-Java 버전 확인:
+| Build | Gradle Wrapper |
+| 일반 웹 포트 | 8080 |
+| MCP Server | 8081 |
+| PostgreSQL | localhost:5432 |
 
 ```bash
 java -version
 ```
 
-Gradle은 별도로 설치할 필요가 없습니다. 각 프로젝트에 `gradlew`와 `gradlew.bat`가 포함되어 있습니다.
+---
 
-Windows PowerShell:
+## 14.2 Eclipse / STS
+
+① `File → Import`  
+② `Gradle → Existing Gradle Project`  
+③ 실행 프로젝트 선택  
+④ JDK 21 확인  
+⑤ Gradle 동기화  
+⑥ `DemoApplication.java` 실행  
+⑦ 일반 웹 예제는 `http://localhost:8080` 접속
+
+---
+
+## 14.3 VS Code
+
+권장 확장:
+
+- Extension Pack for Java
+- Spring Boot Extension Pack
+
+`Java: Configure Java Runtime`에서 JDK 21을 지정합니다.
+
+Windows:
 
 ```powershell
-.\gradlew.bat --version
+.\gradlew.bat clean bootRun
 ```
 
 macOS / Linux:
 
 ```bash
 chmod +x gradlew
-./gradlew --version
-```
-
----
-
-## 14.3 API Key 설정
-
-대부분의 실습 프로젝트는 `OPENAI_API_KEY` 환경변수를 사용합니다.
-
-Windows PowerShell:
-
-```powershell
-$env:OPENAI_API_KEY="본인의_OPENAI_API_KEY"
-$env:SERPAPI_API_KEY="본인의_SERPAPI_API_KEY"
-```
-
-macOS / Linux:
-
-```bash
-export OPENAI_API_KEY="본인의_OPENAI_API_KEY"
-export SERPAPI_API_KEY="본인의_SERPAPI_API_KEY"
-```
-
-SerpApi를 사용하지 않는 장에서는 `SERPAPI_API_KEY`를 설정하지 않아도 됩니다. API Key는 소스에 직접 작성해서 GitHub에 커밋하지 않습니다.
-
----
-
-## 14.4 Eclipse / STS에서 실행
-
-이 프로젝트들은 Eclipse 계열 IDE에서 작성된 Gradle 프로젝트입니다.
-
-① `File → Import`를 선택합니다.  
-② `Gradle → Existing Gradle Project`를 선택합니다.  
-③ 실행할 개별 프로젝트 폴더를 선택합니다.  
-④ Project JRE가 **Java 21**인지 확인합니다.  
-⑤ Gradle 동기화가 완료될 때까지 기다립니다.  
-⑥ `DemoApplication.java`를 찾아 `Run As → Spring Boot App` 또는 `Java Application`으로 실행합니다.  
-⑦ 일반 웹 프로젝트는 `http://localhost:8080`에서 확인합니다.
-
-여러 프로젝트가 8080 포트를 공통으로 사용하므로 기본적으로 하나씩 실행합니다.
-
----
-
-## 14.5 VS Code에서 실행
-
-Eclipse 전용 소스가 아니므로 VS Code에서도 그대로 실행할 수 있습니다. 빌드는 IDE가 아니라 Gradle Wrapper가 담당합니다.
-
-### (1) 권장 확장
-
-- Extension Pack for Java
-- Spring Boot Extension Pack
-
-### (2) 프로젝트 열기
-
-저장소 전체를 열어도 되지만 처음에는 실행할 개별 프로젝트 폴더를 직접 여는 것이 단순합니다.
-
-예:
-
-```text
-projects-spring-ai-2.0/ch02-chat-model-api
-```
-
-VS Code 명령 팔레트에서 `Java: Configure Java Runtime`을 실행해 Project JDK를 Java 21로 맞춥니다.
-
-### (3) 터미널에서 실행
-
-Windows:
-
-```powershell
-.\gradlew.bat clean bootRun
-```
-
-macOS / Linux:
-
-```bash
 ./gradlew clean bootRun
 ```
 
-또는 `DemoApplication.java`의 `Run Java` 버튼이나 Spring Boot Dashboard를 사용할 수 있습니다.
-
-> 처음 실행할 때는 VS Code 실행 버튼보다 터미널의 `bootRun`을 먼저 권장합니다. IDE 설정 문제와 애플리케이션 실행 문제를 구분하기 쉽습니다.
-
 ---
 
-## 14.6 프로젝트별 추가 준비 사항
-
-| 프로젝트 | 추가 준비 |
-|---|---|
-| ch01 ~ ch07 | OpenAI API Key |
-| ch08-embedding-vector-store | OpenAI + PostgreSQL/PGVector |
-| ch09-in-memory-chat-memory | OpenAI |
-| ch09-jdbc-chat-memory | OpenAI + PostgreSQL |
-| ch09-vector-store-chat-memory | OpenAI + PostgreSQL/PGVector |
-| ch10-rag | OpenAI + PostgreSQL/PGVector |
-| ch11-tool-calling-basic | OpenAI + PostgreSQL/PGVector |
-| ch11-tool-calling | OpenAI + PostgreSQL/PGVector + SerpApi |
-| ch12 STDIO MCP Host | OpenAI + STDIO MCP Server JAR 빌드 |
-| ch12 STDIO Internet Search Server | SerpApi |
-| ch12 WebMVC/WebFlux MCP Host | OpenAI |
-| ch12 WebMVC/WebFlux MCP Server | Internet Search Tool 사용 시 SerpApi |
-| ch13-agent | OpenAI |
-
----
-
-## 14.7 제11장 Tool Calling 실행 방법 — Docker 먼저 실행
-
-`ch11-tool-calling-basic`과 `ch11-tool-calling`의 `application.properties`는 다음 PostgreSQL 연결을 사용합니다.
-
-```properties
-spring.datasource.url=jdbc:postgresql://localhost:5432/postgres
-spring.datasource.username=postgres
-spring.datasource.password=postgres
-```
-
-두 프로젝트 모두 PGVector 관련 의존성과 설정을 포함하므로 **애플리케이션보다 PGVector Docker 컨테이너를 먼저 실행해야 합니다.** Docker 또는 PostgreSQL이 준비되지 않으면 시작 과정에서 DB 연결 오류가 발생할 수 있습니다.
-
-### (1) Docker 상태 확인
-
-```bash
-docker version
-docker ps
-```
-
-### (2) PGVector 컨테이너 실행
-
-저장소의 실제 스크립트:
-
-```text
-docker/pgvector/pgvector.ps1
-```
-
-Windows PowerShell:
-
-```powershell
-docker run `
-  --name pgvector `
-  -d `
-  -p 5432:5432 `
-  -e POSTGRES_USER=postgres `
-  -e POSTGRES_PASSWORD=postgres `
-  -e TZ=Asia/Seoul `
-  -v pgvector-volume:/var/lib/postgresql/data `
-  pgvector/pgvector:pg17 `
-  postgres -c max_connections=500
-```
-
-macOS / Linux:
-
-```bash
-docker run \
-  --name pgvector \
-  -d \
-  -p 5432:5432 \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e TZ=Asia/Seoul \
-  -v pgvector-volume:/var/lib/postgresql/data \
-  pgvector/pgvector:pg17 \
-  postgres -c max_connections=500
-```
-
-이미 컨테이너가 생성되어 있다면:
-
-```bash
-docker start pgvector
-docker ps
-```
-
-> 로컬 PostgreSQL이 이미 5432 포트를 사용하고 있으면 Docker 컨테이너와 충돌합니다. 이 경우 로컬 PostgreSQL을 중지하거나 포트 구성을 조정합니다.
-
-### (3) Key 설정
+## 14.4 환경변수
 
 Windows:
 
@@ -1244,49 +1126,11 @@ export OPENAI_API_KEY="본인의_OPENAI_API_KEY"
 export SERPAPI_API_KEY="본인의_SERPAPI_API_KEY"
 ```
 
-### (4) ch11 실행
-
-```bash
-cd projects-spring-ai-2.0/ch11-tool-calling
-```
-
-Windows:
-
-```powershell
-.\gradlew.bat clean bootRun
-```
-
-macOS / Linux:
-
-```bash
-./gradlew clean bootRun
-```
-
-브라우저:
-
-```text
-http://localhost:8080
-```
-
-실행 순서는 다음과 같습니다.
-
-```text
-Docker Desktop 실행
-        ↓
-PGVector 컨테이너 실행
-        ↓
-OPENAI_API_KEY / SERPAPI_API_KEY 설정
-        ↓
-ch11-tool-calling 실행
-        ↓
-http://localhost:8080
-```
-
 ---
 
-## 14.8 PGVector가 필요한 다른 프로젝트
+## 14.5 PostgreSQL/PGVector
 
-제11장뿐 아니라 다음 프로젝트도 `localhost:5432`의 PostgreSQL 또는 PGVector를 사용합니다.
+다음 프로젝트는 DB가 필요합니다.
 
 ```text
 ch08-embedding-vector-store
@@ -1297,19 +1141,72 @@ ch11-tool-calling-basic
 ch11-tool-calling
 ```
 
-따라서 이 프로젝트들을 실행할 때도 `docker ps`에서 `pgvector` 컨테이너가 실행 중인지 먼저 확인하는 것이 안전합니다.
+저장소 스크립트:
+
+```text
+docker/pgvector/pgvector.ps1
+```
+
+Windows PowerShell에서는 저장소의 `pgvector.ps1`을 실행하거나 다음 한 줄 명령을 사용할 수 있습니다.
+
+```powershell
+docker run --name pgvector -d -p 5432:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e TZ=Asia/Seoul -v pgvector-volume:/var/lib/postgresql/data pgvector/pgvector:pg17 postgres -c max_connections=500
+```
+
+macOS / Linux:
+
+```bash
+docker run --name pgvector -d -p 5432:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e TZ=Asia/Seoul -v pgvector-volume:/var/lib/postgresql/data pgvector/pgvector:pg17 postgres -c max_connections=500
+```
+
+이미 생성되어 있으면:
+
+```bash
+docker start pgvector
+docker ps
+```
 
 ---
 
-## 14.9 제12장 STDIO MCP 실행 방법
+## 14.6 제11장 실행
 
-STDIO Host의 실제 설정 파일은 다음 위치에 있습니다.
+① Docker Desktop 실행  
+② `pgvector` 실행  
+③ `OPENAI_API_KEY` 설정  
+④ 프로젝트 실행  
+⑤ 가장 단순한 페이지부터 테스트
 
-```text
-projects-spring-ai-2.0/ch12-stdio-mcp-host/src/main/resources/mcp-servers.json
+```bash
+cd projects-spring-ai-2.0/ch11-tool-calling
+./gradlew clean bootRun
 ```
 
-현재 Host는 다음 네 MCP Server를 `java -jar`로 실행하도록 구성되어 있습니다.
+Windows:
+
+```powershell
+cd projects-spring-ai-2.0/ch11-tool-calling
+.\gradlew.bat clean bootRun
+```
+
+권장 페이지 순서:
+
+```text
+/date-time-tools
+/heating-system-tools
+/recommend-movie-tools
+/exception-handling
+/boom-barrier-tools
+/file-system-tools
+/tool-search
+```
+
+`/internet-search-tools`는 현재 Bean 애노테이션이 주석 처리되어 있어 직접 검색 기능이 활성화되지 않습니다.
+
+---
+
+## 14.7 STDIO MCP
+
+먼저 네 Server를 `bootJar`로 빌드합니다.
 
 ```text
 ch12-stdio-mcp-server-datetime
@@ -1318,11 +1215,11 @@ ch12-stdio-mcp-server-filesystem
 ch12-stdio-mcp-server-internetsearch
 ```
 
-따라서 **각 MCP Server의 JAR을 먼저 빌드하고 Host를 실행**합니다.
+각 폴더에서:
 
-### (1) Server JAR 빌드
-
-각 Server 프로젝트 폴더에서:
+```bash
+./gradlew clean bootJar
+```
 
 Windows:
 
@@ -1330,373 +1227,251 @@ Windows:
 .\gradlew.bat clean bootJar
 ```
 
-macOS / Linux:
-
-```bash
-./gradlew clean bootJar
-```
-
-생성 위치:
+그 다음 다음 파일의 JAR 절대 경로를 현재 PC에 맞춥니다.
 
 ```text
-build/libs/<프로젝트명>-0.0.1-SNAPSHOT.jar
+projects-spring-ai-2.0/ch12-stdio-mcp-host/src/main/resources/mcp-servers.json
 ```
 
-### (2) mcp-servers.json의 절대 경로 확인
+현재 원본은 `C:/spring-ai-course/...` 기준입니다.
 
-현재 원본 설정에는 다음 기준 경로가 들어 있습니다.
-
-```text
-C:/spring-ai-course/projects-spring-ai-2.0/...
-```
-
-저장소를 다른 디렉터리에 clone했거나 macOS / Linux / VS Code에서 실행한다면 자신의 실제 JAR 절대 경로로 수정해야 합니다.
-
-macOS 예:
-
-```json
-{
-  "command": "java",
-  "args": [
-    "-jar",
-    "/Users/사용자명/springai-20260702/projects-spring-ai-2.0/ch12-stdio-mcp-server-datetime/build/libs/ch12-stdio-mcp-server-datetime-0.0.1-SNAPSHOT.jar"
-  ]
-}
-```
-
-### (3) Host 실행
-
-Host에는 `OPENAI_API_KEY`가 필요합니다. Internet Search MCP Server를 사용할 경우 Host를 실행하는 환경에 `SERPAPI_API_KEY`도 설정합니다.
+Host 실행:
 
 ```bash
 cd projects-spring-ai-2.0/ch12-stdio-mcp-host
-```
-
-Windows:
-
-```powershell
-.\gradlew.bat clean bootRun
-```
-
-macOS / Linux:
-
-```bash
 ./gradlew clean bootRun
 ```
 
-Host가 `mcp-servers.json`의 `java -jar` 명령을 사용해 STDIO MCP Server 프로세스를 실행합니다.
-
-### (4) FileSystem Tool 경로
-
-현재 FileSystem Tool은 사용자 홈 디렉터리 아래의 다음 폴더를 사용합니다.
-
-```text
-~/Documents/ch11-tool-calling
-```
-
-폴더가 없으면 실행 시 자동 생성됩니다.
+원본 설정에는 Internet Search Server도 포함되므로 변경 없이 모두 사용할 경우 `SERPAPI_API_KEY`도 준비합니다.
 
 ---
 
-## 14.10 제12장 WebMVC MCP 실행 방법
+## 14.8 WebMVC MCP
 
-WebMVC 예제는 MCP Server와 MCP Host를 별도로 실행합니다.
-
-현재 소스 설정:
-
-```text
-MCP Server  : http://localhost:8081
-MCP Endpoint: /mcp
-MCP Host    : http://localhost:8080
-Protocol    : STREAMABLE
-```
-
-**Server를 먼저 실행하고 Host를 나중에 실행합니다.**
-
-터미널 1:
+Server:
 
 ```bash
 cd projects-spring-ai-2.0/ch12-webmvc-mcp-server
+export SERPAPI_API_KEY="본인의_SERPAPI_API_KEY"
 ./gradlew clean bootRun
 ```
 
-터미널 2:
+Host:
 
 ```bash
 cd projects-spring-ai-2.0/ch12-webmvc-mcp-host
-./gradlew clean bootRun
-```
-
-Windows에서는 `./gradlew` 대신 `.\gradlew.bat`를 사용합니다.
-
-`ch12-webmvc-mcp-server-annotation`과 `ch12-webmvc-mcp-host-annotation`도 같은 순서로 실행합니다.
-
----
-
-## 14.11 제12장 WebFlux MCP 실행 방법
-
-WebFlux도 Server → Host 순서입니다.
-
-터미널 1:
-
-```bash
-cd projects-spring-ai-2.0/ch12-webflux-mcp-server
-./gradlew clean bootRun
-```
-
-터미널 2:
-
-```bash
-cd projects-spring-ai-2.0/ch12-webflux-mcp-host
-./gradlew clean bootRun
-```
-
-Windows:
-
-```powershell
-.\gradlew.bat clean bootRun
-```
-
-현재 설정:
-
-```text
-WebFlux MCP Server = 8081
-WebFlux MCP Host   = 8080
-MCP Protocol       = STREAMABLE
-Host Type          = ASYNC
-Server Type        = ASYNC
-```
-
-WebMVC와 WebFlux 예제는 같은 8080/8081 포트를 사용하므로 서로 동시에 실행하지 않는 것이 좋습니다.
-
----
-
-## 14.12 일반 프로젝트 실행 예
-
-예를 들어 `ch02-chat-model-api`를 VS Code에서 실행하려면:
-
-macOS / Linux:
-
-```bash
-cd projects-spring-ai-2.0/ch02-chat-model-api
 export OPENAI_API_KEY="본인의_OPENAI_API_KEY"
 ./gradlew clean bootRun
 ```
 
-Windows PowerShell:
+Windows에서는 `export` 대신 `$env:...`, `./gradlew` 대신 `.\gradlew.bat`를 사용합니다.
 
-```powershell
-cd projects-spring-ai-2.0/ch02-chat-model-api
-$env:OPENAI_API_KEY="본인의_OPENAI_API_KEY"
-.\gradlew.bat clean bootRun
+```text
+Server : 8081
+Host   : 8080
+Endpoint : /mcp
 ```
-
-정상 기동 후 `http://localhost:8080`으로 접속합니다.
 
 ---
 
-## 14.13 실행 오류 점검 순서
+## 14.9 WebFlux MCP
 
-① `java -version`이 Java 21인지 확인합니다.  
-② `OPENAI_API_KEY`가 현재 실행 터미널에 설정되어 있는지 확인합니다.  
-③ 인터넷 검색 Tool을 사용하는 경우 `SERPAPI_API_KEY`를 확인합니다.  
-④ 8080 또는 8081 포트를 다른 프로세스가 사용 중인지 확인합니다.  
-⑤ DB를 사용하는 장은 `docker ps`에서 `pgvector`가 실행 중인지 확인합니다.  
-⑥ PostgreSQL 5432 포트 충돌 여부를 확인합니다.  
-⑦ STDIO MCP는 Server JAR을 먼저 `bootJar`로 빌드했는지 확인합니다.  
-⑧ `mcp-servers.json`의 JAR 절대 경로가 현재 컴퓨터의 실제 경로와 일치하는지 확인합니다.  
-⑨ 의존성 문제가 의심되면 `clean` 후 다시 실행합니다.
+WebMVC가 정상 동작한 뒤 진행합니다.
 
-Windows:
-
-```powershell
-.\gradlew.bat clean bootRun
-```
-
-macOS / Linux:
+Server:
 
 ```bash
+cd projects-spring-ai-2.0/ch12-webflux-mcp-server
+export SERPAPI_API_KEY="본인의_SERPAPI_API_KEY"
 ./gradlew clean bootRun
 ```
 
----
+Host:
 
-# 제15장. 효과적인 학습 방법
-
-## 15.1 처음부터 모든 코드를 외우지 않는다
-
-다음 세 가지를 먼저 이해합니다.
-
-```text
-누가 판단하는가?
-누가 실행하는가?
-결과가 어디로 돌아가는가?
+```bash
+cd projects-spring-ai-2.0/ch12-webflux-mcp-host
+export OPENAI_API_KEY="본인의_OPENAI_API_KEY"
+./gradlew clean bootRun
 ```
 
-Tool Calling에서는 다음처럼 답할 수 있어야 합니다.
+실행과 함께 `Flux`, `Mono`, `boundedElastic` 사용 위치를 확인합니다.
+
+---
+
+## 14.10 Annotation MCP
+
+기본 WebMVC MCP를 끝낸 뒤 실행합니다.
+
+Server:
+
+```bash
+cd projects-spring-ai-2.0/ch12-webmvc-mcp-server-annotation
+export SERPAPI_API_KEY="본인의_SERPAPI_API_KEY"
+./gradlew clean bootRun
+```
+
+Host:
+
+```bash
+cd projects-spring-ai-2.0/ch12-webmvc-mcp-host-annotation
+export OPENAI_API_KEY="본인의_OPENAI_API_KEY"
+./gradlew clean bootRun
+```
+
+Logging → Resource → Prompt → Progress → Sampling → Elicitation → Tool Changed 순으로 확인합니다.
+
+---
+
+## 14.11 오류 점검
+
+① Java 21  
+② Gradle Wrapper  
+③ OpenAI API Key  
+④ SerpApi 사용 Server의 SerpApi Key  
+⑤ 8080/8081 포트  
+⑥ `docker ps`  
+⑦ PostgreSQL 5432 충돌  
+⑧ STDIO Server JAR  
+⑨ `mcp-servers.json` 절대 경로  
+⑩ `clean bootRun` 재실행
+
+---
+
+# 제15장. 교재 사용 방법
+
+## 15.1 코드를 읽는 순서
 
 ```text
-LLM → Tool 선택
-Spring AI → Tool 실행
-Tool → 실행 결과 반환
-LLM → 최종 답변 생성
+application.properties
+    ↓
+Controller
+    ↓
+Service
+    ↓
+Tool
+    ↓
+실제 실행
+    ↓
+콘솔 로그
+```
+
+MCP는 다음 순서를 추가합니다.
+
+```text
+Server 설정
+    ↓
+Server @McpTool
+    ↓
+Host 설정
+    ↓
+ToolCallbackProvider
+    ↓
+Host ChatClient
 ```
 
 ---
 
-## 15.2 프로젝트를 실행한 뒤 코드를 읽는다
+## 15.2 정상 실행을 먼저 확인한다
 
-추천 순서는 다음과 같습니다.
-
-① 프로젝트를 실행한다.  
-② 정상 결과를 확인한다.  
-③ 어떤 질문에서 Tool이 실행되는지 확인한다.  
-④ Tool 클래스를 확인한다.  
-⑤ ChatClient와 Tool 연결 코드를 확인한다.  
-⑥ 설정 파일을 확인한다.  
-⑦ 일부 값을 변경하고 다시 실행한다.
+① 실행  
+② 정상 결과 확인  
+③ Tool 로그 확인  
+④ 핵심 클래스 읽기  
+⑤ 값을 바꿔 다시 실행
 
 ---
 
-## 15.3 앞 프로젝트와의 차이를 찾는다
-
-MCP 실습에서는 매 프로젝트를 처음부터 새로 이해하려고 하지 않습니다.
-
-다음 질문을 반복합니다.
+## 15.3 앞 단계와 다른 코드만 찾는다
 
 ```text
-이전 프로젝트와 무엇이 같은가?
-무엇이 새로 추가되었는가?
-통신 방식은 무엇이 달라졌는가?
-Tool은 어디에서 실행되는가?
-```
+@Tool
+   vs
+@McpTool
 
-이 방식으로 보면 STDIO, WebMVC, WebFlux 프로젝트의 차이가 훨씬 명확해집니다.
+.tools(localTool)
+   vs
+.defaultTools(toolCallbackProvider)
+
+STDIO
+   vs
+Streamable HTTP
+
+SYNC WebMVC
+   vs
+ASYNC WebFlux
+```
 
 ---
 
-# 부록 A. 수업 일정과 교재 대응표
+# 부록 A. 현재 소스 대응표
 
-| 수업 내용 | 교재 |
+| 학습 내용 | 실제 프로젝트 |
 |---|---|
-| 애플리케이션 내부 Tool 정의 | 제2장 |
-| 내부 Tool + LLM 활용 | 제2장~제3장 |
-| MCP 통신 방식 이해 | 제4장 |
-| STDIO MCP Server 외부 Tool 정의 | 제5장 |
-| STDIO MCP Server + LLM 활용 | 제5장 |
-| WebMVC 기반 MCP Server | 제6장~제7장 |
-| WebFlux 기반 MCP Server | 제7장 |
-| 로컬 파일 시스템 Tool | 제8장 |
-| 인터넷 검색 Tool | 제9장 |
-| 비전을 활용한 제어 Tool | 제10장 |
-| 종합 활용 | 제11장~제13장 |
+| Spring AI 시작 | `ch01-spring-ai-project` |
+| Chat Model API | `ch02-chat-model-api` |
+| Prompt | `ch03-prompt` |
+| Structured Output | `ch04-structured-output` |
+| Advisor | `ch07-advisor` |
+| VectorStore | `ch08-embedding-vector-store` |
+| Chat Memory | `ch09-*` |
+| RAG | `ch10-rag` |
+| Tool Calling | `ch11-tool-calling-basic`, `ch11-tool-calling` |
+| STDIO MCP | `ch12-stdio-*` |
+| WebMVC MCP | `ch12-webmvc-*` |
+| WebFlux MCP | `ch12-webflux-*` |
+| MCP 고급 기능 | `ch12-webmvc-*-annotation` |
+| Agent | `ch13-agent` |
 
 ---
 
-# 부록 B. 실습 전 체크리스트
+# 부록 B. 실제 소스 분석에서 확인한 중요 사항
 
-## Java / Spring
-
-```bash
-java -version
-```
-
-확인 항목:
-
-- JDK 버전
-- Gradle Wrapper 실행 가능 여부
-- Spring Boot 프로젝트 실행 여부
-- 프로젝트의 Spring AI 버전
-- MCP 전송 방식(STDIO / SSE / STREAMABLE / STATELESS)
-- 수업 소스와 공식 문서의 버전 차이 여부
-
-## OpenAI API Key
-
-macOS / Linux:
-
-```bash
-export OPENAI_API_KEY="본인의_API_KEY"
-```
-
-Windows PowerShell:
-
-```powershell
-$env:OPENAI_API_KEY="본인의_API_KEY"
-```
-
-API Key는 GitHub 저장소에 직접 저장하지 않습니다.
-
----
-
-# 부록 C. 문제 해결 체크리스트
-
-실습이 정상적으로 동작하지 않을 때는 다음 순서로 확인합니다.
-
-① 애플리케이션이 정상 기동되었는가?  
-② 필요한 환경변수가 설정되었는가?  
-③ LLM API 호출 자체가 성공하는가?  
-④ Tool이 애플리케이션에 등록되었는가?  
-⑤ Tool description과 파라미터가 명확한가?  
-⑥ MCP Client와 Server가 연결되었는가?  
-⑦ STDIO 사용 시 불필요한 표준 출력이 섞이지 않았는가?  
-⑧ Web 기반 MCP라면 포트 충돌이 없는가?  
-⑨ 외부 API를 사용한다면 API Key와 네트워크 연결이 정상인가?  
-⑩ 로그에서 실제 오류가 발생한 최초 지점을 확인했는가?
-
----
-
-## 검토 반영 사항
-
-이번 검토에서 다음 내용을 수정·보완했습니다.
-
-1. 과정안내서의 단원명을 임의로 바꾸지 않고 `SSE 통신 MCP Server 개발`로 원문에 맞췄습니다.
-2. Tool 파라미터 설명을 실제 Spring AI의 `@ToolParam`과 JSON Schema 구조에 맞게 수정했습니다.
-3. STDIO를 무조건 "별도 프로세스"라고 단정하지 않고, 표준 입출력 기반 통신이라는 핵심 개념으로 바로잡았습니다.
-4. 원 수업의 SSE는 유지하되 Spring AI 2.0 계열에서 SSE가 deprecated임을 명시하고 Streamable HTTP를 현재 권장 방식으로 추가했습니다.
-5. 검색 API Key 예시를 실제 Spring 설정에서 사용할 수 있는 property placeholder 형태로 수정했습니다.
-6. HTTP 기반 MCP Server는 기본 인증·인가가 제공되지 않는다는 보안 주의사항을 추가했습니다.
-7. 여러 Tool을 등록하는 것과 Agentic Workflow를 동일시하지 않도록 설명을 보완했습니다.
-8. 실제 압축파일의 프로젝트 코드와 아직 1:1 검증되지 않은 부분을 명확히 표시했습니다.
+① 현재 WebMVC/WebFlux MCP는 `STREAMABLE` 설정입니다.  
+② ch11 직접 Internet Search 예제는 Bean 애노테이션이 주석 처리되어 있습니다.  
+③ Exception Handling의 커스텀 Processor `@Bean`도 주석 처리되어 있습니다.  
+④ Tool Search는 basic에서 regex, 전체 버전에서 vector 설정을 사용합니다.  
+⑤ Tool Search용 VectorStore는 `spring_ai_tool_search_vector_store`, 3072차원입니다.  
+⑥ STDIO Host의 `mcp-servers.json`은 Windows 절대 경로를 포함합니다.  
+⑦ WebFlux Host는 `boundedElastic`을 사용합니다.  
+⑧ Annotation MCP는 Logging, Resource, Prompt, Progress, Sampling, Elicitation, Tool Changed를 포함합니다.
 
 ---
 
 ## 마무리
 
-이 교재에서 가장 중요한 것은 개별 annotation이나 설정값을 외우는 것이 아닙니다.
-
-전체 구조를 다음과 같이 이해하는 것이 우선입니다.
-
 ```text
-사용자의 목표
-     ↓
-LLM의 판단
-     ↓
-Tool 선택
-     ↓
-애플리케이션 또는 MCP Server에서 실제 기능 실행
-     ↓
-실행 결과 반환
-     ↓
-LLM의 최종 응답
+ChatClient 기초
+   ↓
+내부 @Tool
+   ↓
+ToolParam / ToolContext
+   ↓
+여러 Tool 조합
+   ↓
+File / Vision
+   ↓
+Tool Search
+   ↓
+@McpTool
+   ↓
+STDIO MCP
+   ↓
+WebMVC Streamable HTTP
+   ↓
+WebFlux ASYNC
+   ↓
+MCP Resource / Prompt / Sampling / Elicitation
+   ↓
+Agent
 ```
 
-이 구조가 이해되면 파일 처리, 인터넷 검색, 데이터베이스, 사내 API, 비전 제어 등 다양한 기능을 같은 원리로 확장할 수 있습니다.
+앞 단계와 다음 단계에서 **무엇이 달라졌는지 비교하면서 진행하는 것**이 이 저장소를 가장 효율적으로 학습하는 방법입니다.
 
 ---
 
 ## 참고
 
-- 과정명: [인공지능] Spring AI Tool 호출 및 MCP Server 개발
-- 교육수준: 중급
-- 교육시간: 12시간
-- 선수지식: Spring Boot 애플리케이션 개발, Spring AI 기초
-- 실제 실습 프로젝트는 `projects-spring-ai-2.0` 아래에 장별 프로젝트로 정리되어 있습니다.
-- README의 짧은 Java 코드는 개념 설명용이며, 실제 실행 코드는 각 프로젝트의 `src/main/java`와 `src/main/resources`를 기준으로 확인합니다.
-- 본 실행 가이드는 현재 `main` 브랜치의 `build.gradle`, `application.properties`, `mcp-servers.json`, `docker/pgvector/pgvector.ps1` 설정을 기준으로 작성했습니다.
-
-### 기술 검토 참고 문서
-
-- Spring AI Tool Calling: https://docs.spring.io/spring-ai/reference/api/tools.html
-- Spring AI MCP Overview: https://docs.spring.io/spring-ai/reference/api/mcp/mcp-overview.html
-- Spring AI MCP Server Boot Starter: https://docs.spring.io/spring-ai/reference/api/mcp/mcp-server-boot-starter-docs.html
-- Spring AI Streamable HTTP MCP Server: https://docs.spring.io/spring-ai/reference/api/mcp/mcp-streamable-http-server-boot-starter-docs.html
+- 실제 실행 소스: `projects-spring-ai-2.0`
+- PGVector 스크립트: `docker/pgvector/pgvector.ps1`
+- STDIO 설정: `projects-spring-ai-2.0/ch12-stdio-mcp-host/src/main/resources/mcp-servers.json`
+- 본 README는 현재 `main` 브랜치의 `build.gradle`, `application.properties`, Java 소스를 기준으로 정리했습니다.
