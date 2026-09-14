@@ -986,35 +986,538 @@ Agentic AI
 
 ---
 
-# 제14장. 실습 프로젝트 구성 계획
+# 제14장. 실습 프로젝트 구성 및 실행 방법
 
-이 저장소에서는 수업 소스를 다음 구조로 정리하는 것을 목표로 합니다.
+## 14.1 실제 소스 코드 위치
+
+현재 실행 가능한 Spring AI 2.0 실습 프로젝트는 `projects-spring-ai-2.0/` 아래에 장별로 정리되어 있습니다.
 
 ```text
-springai-20260702/
-├── 01-tool-calling/
-├── 02-tool-calling-llm/
-├── 03-mcp-stdio-server/
-├── 04-mcp-stdio-client/
-├── 05-mcp-webmvc-server/
-├── 06-mcp-webmvc-client/
-├── 07-mcp-webflux-server/
-├── 08-mcp-webflux-client/
-├── 09-file-system-tool/
-├── 10-internet-search-tool/
-├── 11-vision-tool/
-└── README.md
+projects-spring-ai-2.0/
+├── ch01-spring-ai-project
+├── ch02-chat-model-api
+├── ch03-prompt
+├── ch04-structured-output
+├── ch05-voice-chat
+├── ch06-vision-image-generation
+├── ch07-advisor
+├── ch08-embedding-vector-store
+├── ch09-in-memory-chat-memory
+├── ch09-jdbc-chat-memory
+├── ch09-vector-store-chat-memory
+├── ch10-rag
+├── ch11-tool-calling-basic
+├── ch11-tool-calling
+├── ch12-stdio-mcp-host
+├── ch12-stdio-mcp-server-boombarrier
+├── ch12-stdio-mcp-server-datetime
+├── ch12-stdio-mcp-server-filesystem
+├── ch12-stdio-mcp-server-internetsearch
+├── ch12-webmvc-mcp-host-annotation
+├── ch12-webmvc-mcp-host
+├── ch12-webmvc-mcp-server-annotation
+├── ch12-webmvc-mcp-server
+├── ch12-webflux-mcp-host
+├── ch12-webflux-mcp-server
+└── ch13-agent
 ```
 
-각 프로젝트는 다음 기준으로 정리합니다.
+부록 예제로 `appendix-chat-model-api-google-genai`, `appendix-chat-model-api-ollama`도 포함되어 있습니다.
 
-1. 독립 실행 가능한 Spring Boot 프로젝트
-2. API Key 및 비밀번호는 환경변수로 분리
-3. 초보자가 이해할 수 있도록 핵심 코드에 주석 추가
-4. 프로젝트별 실행 방법 제공
-5. 정상 실행 결과 확인 방법 제공
-6. 앞 프로젝트와 달라진 부분을 명확하게 표시
-7. 불필요한 의존성과 설정 최소화
+---
+
+## 14.2 공통 실행 환경
+
+현재 소스의 `build.gradle`을 기준으로 주요 프로젝트는 다음 환경을 사용합니다.
+
+| 항목 | 기준 |
+|---|---|
+| Java | JDK 21 |
+| Build Tool | Gradle Wrapper |
+| Spring Boot | 4.1.0 |
+| Spring AI | 2.0.1 |
+| 일반 웹 프로젝트 포트 | 8080 |
+| MCP Server 포트 | 8081 |
+| PostgreSQL / PGVector | localhost:5432 |
+
+Java 버전 확인:
+
+```bash
+java -version
+```
+
+Gradle은 별도로 설치할 필요가 없습니다. 각 프로젝트에 `gradlew`와 `gradlew.bat`가 포함되어 있습니다.
+
+Windows PowerShell:
+
+```powershell
+.\gradlew.bat --version
+```
+
+macOS / Linux:
+
+```bash
+chmod +x gradlew
+./gradlew --version
+```
+
+---
+
+## 14.3 API Key 설정
+
+대부분의 실습 프로젝트는 `OPENAI_API_KEY` 환경변수를 사용합니다.
+
+Windows PowerShell:
+
+```powershell
+$env:OPENAI_API_KEY="본인의_OPENAI_API_KEY"
+$env:SERPAPI_API_KEY="본인의_SERPAPI_API_KEY"
+```
+
+macOS / Linux:
+
+```bash
+export OPENAI_API_KEY="본인의_OPENAI_API_KEY"
+export SERPAPI_API_KEY="본인의_SERPAPI_API_KEY"
+```
+
+SerpApi를 사용하지 않는 장에서는 `SERPAPI_API_KEY`를 설정하지 않아도 됩니다. API Key는 소스에 직접 작성해서 GitHub에 커밋하지 않습니다.
+
+---
+
+## 14.4 Eclipse / STS에서 실행
+
+이 프로젝트들은 Eclipse 계열 IDE에서 작성된 Gradle 프로젝트입니다.
+
+① `File → Import`를 선택합니다.  
+② `Gradle → Existing Gradle Project`를 선택합니다.  
+③ 실행할 개별 프로젝트 폴더를 선택합니다.  
+④ Project JRE가 **Java 21**인지 확인합니다.  
+⑤ Gradle 동기화가 완료될 때까지 기다립니다.  
+⑥ `DemoApplication.java`를 찾아 `Run As → Spring Boot App` 또는 `Java Application`으로 실행합니다.  
+⑦ 일반 웹 프로젝트는 `http://localhost:8080`에서 확인합니다.
+
+여러 프로젝트가 8080 포트를 공통으로 사용하므로 기본적으로 하나씩 실행합니다.
+
+---
+
+## 14.5 VS Code에서 실행
+
+Eclipse 전용 소스가 아니므로 VS Code에서도 그대로 실행할 수 있습니다. 빌드는 IDE가 아니라 Gradle Wrapper가 담당합니다.
+
+### (1) 권장 확장
+
+- Extension Pack for Java
+- Spring Boot Extension Pack
+
+### (2) 프로젝트 열기
+
+저장소 전체를 열어도 되지만 처음에는 실행할 개별 프로젝트 폴더를 직접 여는 것이 단순합니다.
+
+예:
+
+```text
+projects-spring-ai-2.0/ch02-chat-model-api
+```
+
+VS Code 명령 팔레트에서 `Java: Configure Java Runtime`을 실행해 Project JDK를 Java 21로 맞춥니다.
+
+### (3) 터미널에서 실행
+
+Windows:
+
+```powershell
+.\gradlew.bat clean bootRun
+```
+
+macOS / Linux:
+
+```bash
+./gradlew clean bootRun
+```
+
+또는 `DemoApplication.java`의 `Run Java` 버튼이나 Spring Boot Dashboard를 사용할 수 있습니다.
+
+> 처음 실행할 때는 VS Code 실행 버튼보다 터미널의 `bootRun`을 먼저 권장합니다. IDE 설정 문제와 애플리케이션 실행 문제를 구분하기 쉽습니다.
+
+---
+
+## 14.6 프로젝트별 추가 준비 사항
+
+| 프로젝트 | 추가 준비 |
+|---|---|
+| ch01 ~ ch07 | OpenAI API Key |
+| ch08-embedding-vector-store | OpenAI + PostgreSQL/PGVector |
+| ch09-in-memory-chat-memory | OpenAI |
+| ch09-jdbc-chat-memory | OpenAI + PostgreSQL |
+| ch09-vector-store-chat-memory | OpenAI + PostgreSQL/PGVector |
+| ch10-rag | OpenAI + PostgreSQL/PGVector |
+| ch11-tool-calling-basic | OpenAI + PostgreSQL/PGVector |
+| ch11-tool-calling | OpenAI + PostgreSQL/PGVector + SerpApi |
+| ch12 STDIO MCP Host | OpenAI + STDIO MCP Server JAR 빌드 |
+| ch12 STDIO Internet Search Server | SerpApi |
+| ch12 WebMVC/WebFlux MCP Host | OpenAI |
+| ch12 WebMVC/WebFlux MCP Server | Internet Search Tool 사용 시 SerpApi |
+| ch13-agent | OpenAI |
+
+---
+
+## 14.7 제11장 Tool Calling 실행 방법 — Docker 먼저 실행
+
+`ch11-tool-calling-basic`과 `ch11-tool-calling`의 `application.properties`는 다음 PostgreSQL 연결을 사용합니다.
+
+```properties
+spring.datasource.url=jdbc:postgresql://localhost:5432/postgres
+spring.datasource.username=postgres
+spring.datasource.password=postgres
+```
+
+두 프로젝트 모두 PGVector 관련 의존성과 설정을 포함하므로 **애플리케이션보다 PGVector Docker 컨테이너를 먼저 실행해야 합니다.** Docker 또는 PostgreSQL이 준비되지 않으면 시작 과정에서 DB 연결 오류가 발생할 수 있습니다.
+
+### (1) Docker 상태 확인
+
+```bash
+docker version
+docker ps
+```
+
+### (2) PGVector 컨테이너 실행
+
+저장소의 실제 스크립트:
+
+```text
+docker/pgvector/pgvector.ps1
+```
+
+Windows PowerShell:
+
+```powershell
+docker run `
+  --name pgvector `
+  -d `
+  -p 5432:5432 `
+  -e POSTGRES_USER=postgres `
+  -e POSTGRES_PASSWORD=postgres `
+  -e TZ=Asia/Seoul `
+  -v pgvector-volume:/var/lib/postgresql/data `
+  pgvector/pgvector:pg17 `
+  postgres -c max_connections=500
+```
+
+macOS / Linux:
+
+```bash
+docker run \
+  --name pgvector \
+  -d \
+  -p 5432:5432 \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e TZ=Asia/Seoul \
+  -v pgvector-volume:/var/lib/postgresql/data \
+  pgvector/pgvector:pg17 \
+  postgres -c max_connections=500
+```
+
+이미 컨테이너가 생성되어 있다면:
+
+```bash
+docker start pgvector
+docker ps
+```
+
+> 로컬 PostgreSQL이 이미 5432 포트를 사용하고 있으면 Docker 컨테이너와 충돌합니다. 이 경우 로컬 PostgreSQL을 중지하거나 포트 구성을 조정합니다.
+
+### (3) Key 설정
+
+Windows:
+
+```powershell
+$env:OPENAI_API_KEY="본인의_OPENAI_API_KEY"
+$env:SERPAPI_API_KEY="본인의_SERPAPI_API_KEY"
+```
+
+macOS / Linux:
+
+```bash
+export OPENAI_API_KEY="본인의_OPENAI_API_KEY"
+export SERPAPI_API_KEY="본인의_SERPAPI_API_KEY"
+```
+
+### (4) ch11 실행
+
+```bash
+cd projects-spring-ai-2.0/ch11-tool-calling
+```
+
+Windows:
+
+```powershell
+.\gradlew.bat clean bootRun
+```
+
+macOS / Linux:
+
+```bash
+./gradlew clean bootRun
+```
+
+브라우저:
+
+```text
+http://localhost:8080
+```
+
+실행 순서는 다음과 같습니다.
+
+```text
+Docker Desktop 실행
+        ↓
+PGVector 컨테이너 실행
+        ↓
+OPENAI_API_KEY / SERPAPI_API_KEY 설정
+        ↓
+ch11-tool-calling 실행
+        ↓
+http://localhost:8080
+```
+
+---
+
+## 14.8 PGVector가 필요한 다른 프로젝트
+
+제11장뿐 아니라 다음 프로젝트도 `localhost:5432`의 PostgreSQL 또는 PGVector를 사용합니다.
+
+```text
+ch08-embedding-vector-store
+ch09-jdbc-chat-memory
+ch09-vector-store-chat-memory
+ch10-rag
+ch11-tool-calling-basic
+ch11-tool-calling
+```
+
+따라서 이 프로젝트들을 실행할 때도 `docker ps`에서 `pgvector` 컨테이너가 실행 중인지 먼저 확인하는 것이 안전합니다.
+
+---
+
+## 14.9 제12장 STDIO MCP 실행 방법
+
+STDIO Host의 실제 설정 파일은 다음 위치에 있습니다.
+
+```text
+projects-spring-ai-2.0/ch12-stdio-mcp-host/src/main/resources/mcp-servers.json
+```
+
+현재 Host는 다음 네 MCP Server를 `java -jar`로 실행하도록 구성되어 있습니다.
+
+```text
+ch12-stdio-mcp-server-datetime
+ch12-stdio-mcp-server-boombarrier
+ch12-stdio-mcp-server-filesystem
+ch12-stdio-mcp-server-internetsearch
+```
+
+따라서 **각 MCP Server의 JAR을 먼저 빌드하고 Host를 실행**합니다.
+
+### (1) Server JAR 빌드
+
+각 Server 프로젝트 폴더에서:
+
+Windows:
+
+```powershell
+.\gradlew.bat clean bootJar
+```
+
+macOS / Linux:
+
+```bash
+./gradlew clean bootJar
+```
+
+생성 위치:
+
+```text
+build/libs/<프로젝트명>-0.0.1-SNAPSHOT.jar
+```
+
+### (2) mcp-servers.json의 절대 경로 확인
+
+현재 원본 설정에는 다음 기준 경로가 들어 있습니다.
+
+```text
+C:/spring-ai-course/projects-spring-ai-2.0/...
+```
+
+저장소를 다른 디렉터리에 clone했거나 macOS / Linux / VS Code에서 실행한다면 자신의 실제 JAR 절대 경로로 수정해야 합니다.
+
+macOS 예:
+
+```json
+{
+  "command": "java",
+  "args": [
+    "-jar",
+    "/Users/사용자명/springai-20260702/projects-spring-ai-2.0/ch12-stdio-mcp-server-datetime/build/libs/ch12-stdio-mcp-server-datetime-0.0.1-SNAPSHOT.jar"
+  ]
+}
+```
+
+### (3) Host 실행
+
+Host에는 `OPENAI_API_KEY`가 필요합니다. Internet Search MCP Server를 사용할 경우 Host를 실행하는 환경에 `SERPAPI_API_KEY`도 설정합니다.
+
+```bash
+cd projects-spring-ai-2.0/ch12-stdio-mcp-host
+```
+
+Windows:
+
+```powershell
+.\gradlew.bat clean bootRun
+```
+
+macOS / Linux:
+
+```bash
+./gradlew clean bootRun
+```
+
+Host가 `mcp-servers.json`의 `java -jar` 명령을 사용해 STDIO MCP Server 프로세스를 실행합니다.
+
+### (4) FileSystem Tool 경로
+
+현재 FileSystem Tool은 사용자 홈 디렉터리 아래의 다음 폴더를 사용합니다.
+
+```text
+~/Documents/ch11-tool-calling
+```
+
+폴더가 없으면 실행 시 자동 생성됩니다.
+
+---
+
+## 14.10 제12장 WebMVC MCP 실행 방법
+
+WebMVC 예제는 MCP Server와 MCP Host를 별도로 실행합니다.
+
+현재 소스 설정:
+
+```text
+MCP Server  : http://localhost:8081
+MCP Endpoint: /mcp
+MCP Host    : http://localhost:8080
+Protocol    : STREAMABLE
+```
+
+**Server를 먼저 실행하고 Host를 나중에 실행합니다.**
+
+터미널 1:
+
+```bash
+cd projects-spring-ai-2.0/ch12-webmvc-mcp-server
+./gradlew clean bootRun
+```
+
+터미널 2:
+
+```bash
+cd projects-spring-ai-2.0/ch12-webmvc-mcp-host
+./gradlew clean bootRun
+```
+
+Windows에서는 `./gradlew` 대신 `.\gradlew.bat`를 사용합니다.
+
+`ch12-webmvc-mcp-server-annotation`과 `ch12-webmvc-mcp-host-annotation`도 같은 순서로 실행합니다.
+
+---
+
+## 14.11 제12장 WebFlux MCP 실행 방법
+
+WebFlux도 Server → Host 순서입니다.
+
+터미널 1:
+
+```bash
+cd projects-spring-ai-2.0/ch12-webflux-mcp-server
+./gradlew clean bootRun
+```
+
+터미널 2:
+
+```bash
+cd projects-spring-ai-2.0/ch12-webflux-mcp-host
+./gradlew clean bootRun
+```
+
+Windows:
+
+```powershell
+.\gradlew.bat clean bootRun
+```
+
+현재 설정:
+
+```text
+WebFlux MCP Server = 8081
+WebFlux MCP Host   = 8080
+MCP Protocol       = STREAMABLE
+Host Type          = ASYNC
+Server Type        = ASYNC
+```
+
+WebMVC와 WebFlux 예제는 같은 8080/8081 포트를 사용하므로 서로 동시에 실행하지 않는 것이 좋습니다.
+
+---
+
+## 14.12 일반 프로젝트 실행 예
+
+예를 들어 `ch02-chat-model-api`를 VS Code에서 실행하려면:
+
+macOS / Linux:
+
+```bash
+cd projects-spring-ai-2.0/ch02-chat-model-api
+export OPENAI_API_KEY="본인의_OPENAI_API_KEY"
+./gradlew clean bootRun
+```
+
+Windows PowerShell:
+
+```powershell
+cd projects-spring-ai-2.0/ch02-chat-model-api
+$env:OPENAI_API_KEY="본인의_OPENAI_API_KEY"
+.\gradlew.bat clean bootRun
+```
+
+정상 기동 후 `http://localhost:8080`으로 접속합니다.
+
+---
+
+## 14.13 실행 오류 점검 순서
+
+① `java -version`이 Java 21인지 확인합니다.  
+② `OPENAI_API_KEY`가 현재 실행 터미널에 설정되어 있는지 확인합니다.  
+③ 인터넷 검색 Tool을 사용하는 경우 `SERPAPI_API_KEY`를 확인합니다.  
+④ 8080 또는 8081 포트를 다른 프로세스가 사용 중인지 확인합니다.  
+⑤ DB를 사용하는 장은 `docker ps`에서 `pgvector`가 실행 중인지 확인합니다.  
+⑥ PostgreSQL 5432 포트 충돌 여부를 확인합니다.  
+⑦ STDIO MCP는 Server JAR을 먼저 `bootJar`로 빌드했는지 확인합니다.  
+⑧ `mcp-servers.json`의 JAR 절대 경로가 현재 컴퓨터의 실제 경로와 일치하는지 확인합니다.  
+⑨ 의존성 문제가 의심되면 `clean` 후 다시 실행합니다.
+
+Windows:
+
+```powershell
+.\gradlew.bat clean bootRun
+```
+
+macOS / Linux:
+
+```bash
+./gradlew clean bootRun
+```
 
 ---
 
@@ -1101,7 +1604,7 @@ java -version
 확인 항목:
 
 - JDK 버전
-- Maven 또는 Maven Wrapper 사용 가능 여부
+- Gradle Wrapper 실행 가능 여부
 - Spring Boot 프로젝트 실행 여부
 - 프로젝트의 Spring AI 버전
 - MCP 전송 방식(STDIO / SSE / STREAMABLE / STATELESS)
@@ -1187,9 +1690,9 @@ LLM의 최종 응답
 - 교육수준: 중급
 - 교육시간: 12시간
 - 선수지식: Spring Boot 애플리케이션 개발, Spring AI 기초
-- 원 수업의 세부 예제 코드는 저장소에 프로젝트 단위로 단계적으로 정리할 예정입니다.
-- 현재 README의 Java 코드는 개념 설명용 예제이며, 업로드된 압축파일 내부 프로젝트와 1:1로 대조된 최종 실행 코드는 아닙니다.
-- 실제 실습 프로젝트를 저장소에 추가할 때는 각 프로젝트의 `pom.xml`, Spring AI 버전, MCP transport 설정을 기준으로 다시 검증합니다.
+- 실제 실습 프로젝트는 `projects-spring-ai-2.0` 아래에 장별 프로젝트로 정리되어 있습니다.
+- README의 짧은 Java 코드는 개념 설명용이며, 실제 실행 코드는 각 프로젝트의 `src/main/java`와 `src/main/resources`를 기준으로 확인합니다.
+- 본 실행 가이드는 현재 `main` 브랜치의 `build.gradle`, `application.properties`, `mcp-servers.json`, `docker/pgvector/pgvector.ps1` 설정을 기준으로 작성했습니다.
 
 ### 기술 검토 참고 문서
 
