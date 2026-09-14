@@ -137,7 +137,7 @@ Tool이 몇 개 없고 모두 같은 Spring Boot 애플리케이션 안에 있�
 >
 > 휴대전화마다 충전 단자가 제각각이면 케이블을 따로 준비해야 합니다. MCP도 비슷합니다. 파일 Tool, 검색 Tool, 사내 시스템 Tool을 각각 다른 방식으로 연결하지 않고, **Host와 외부 Tool Server가 공통 규칙으로 대화하도록 만드는 것**이 핵심입니다.
 >
-> 이 저장소에서는 같은 종류의 Tool이 제11장에서는 애플리케이션 내부 `@Tool`로, 제12장에서는 외부 MCP Server의 `@McpTool`로 구현됩니다.
+> 이 저장소에서는 같은 종류의 Tool이 소스 프로젝트 `ch11-tool-calling`에서는 애플리케이션 내부 `@Tool`로, `ch12-*` MCP 프로젝트에서는 외부 MCP Server의 `@McpTool`로 구현됩니다.
 
 ---
 
@@ -161,7 +161,7 @@ Tool Calling을 이해한 뒤 MCP를 배우는 이유는 MCP도 결국 LLM이 �
   <img src="docs/images/spring-ai-agent-loop.png" alt="Spring AI Agent Loop" width="420">
 </p>
 
-> 단순한 텍스트 응답을 넘어 LLM이 Tool을 사용하고 결과를 다시 판단하는 반복 구조를 보여줍니다. 제11장 Tool Calling과 이후 Agent 학습이 어떻게 연결되는지 먼저 큰 흐름으로 확인할 수 있습니다.
+> 단순한 텍스트 응답을 넘어 LLM이 Tool을 사용하고 결과를 다시 판단하는 반복 구조를 보여줍니다. 소스 프로젝트 `ch11-tool-calling`과 이후 Agent 학습이 어떻게 연결되는지 먼저 큰 흐름으로 확인할 수 있습니다.
 
 ```text
 일반 Chat
@@ -185,7 +185,7 @@ Tool Calling과 MCP는 단순한 API 호출 문법이 아니라 AI 애플리케�
 
 ## 2.1 먼저 전체 구조를 본다
 
-제11장 소스는 단순히 `@Tool` 하나만 보여주는 예제가 아닙니다. 하나의 Spring Boot 프로젝트 안에서 Tool Calling의 난이도를 단계적으로 높일 수 있도록 여러 예제가 함께 들어 있습니다.
+`ch11-tool-calling` 소스는 단순히 `@Tool` 하나만 보여주는 예제가 아닙니다. 하나의 Spring Boot 프로젝트 안에서 Tool Calling의 난이도를 단계적으로 높일 수 있도록 여러 예제가 함께 들어 있습니다.
 
 ```text
 ch11-tool-calling/
@@ -308,7 +308,7 @@ Tool 결과를 이용해 최종 답변 생성
 
 ## 2.4 첫 번째 실행 실습
 
-제11장 프로젝트를 실행한 뒤 다음 페이지를 엽니다.
+`ch11-tool-calling` 프로젝트를 실행한 뒤 다음 페이지를 엽니다.
 
 ```text
 http://localhost:8080/date-time-tools
@@ -632,7 +632,7 @@ http://localhost:8080/tool-search
 
 따라서 현재 소스 그대로는 `/internet-search-tools`의 직접 검색 REST 기능이 활성화되지 않습니다.
 
-실행 가능한 인터넷 검색 Tool은 제12장의 MCP Server 버전을 먼저 사용하는 것이 자연스럽습니다.
+실행 가능한 인터넷 검색 Tool은 `ch12-*` MCP Server 버전을 먼저 사용하는 것이 자연스럽습니다.
 
 ---
 
@@ -646,14 +646,14 @@ http://localhost:8080/tool-search
 
 ## 4.1 핵심 차이
 
-제11장:
+`ch11-tool-calling` 내부 Tool:
 
 ```java
 @Tool
 public String getCurrentDateTime() { ... }
 ```
 
-제12장:
+`ch12-*` MCP Server Tool:
 
 ```java
 @McpTool
@@ -676,7 +676,7 @@ public String getCurrentDateTime() { ... }
 
 ## 4.2 구조 비교
 
-| 구분 | 제11장 | 제12장 |
+| 구분 | `ch11-tool-calling` | `ch12-*` MCP 프로젝트 |
 |---|---|---|
 | Tool 위치 | Host 애플리케이션 내부 | 별도 MCP Server |
 | 애노테이션 | `@Tool` | `@McpTool` |
@@ -729,7 +729,7 @@ LLM
 
 > **초보자 주해 — ToolCallbackProvider**
 >
-> 제11장에서는 `DateTimeTools` 같은 Java 객체를 직접 `.tools(...)`에 넣었습니다. MCP에서는 Tool이 다른 프로세스나 서버에 있으므로 Host가 그 객체를 직접 가지고 있지 않습니다.
+> `ch11-tool-calling`에서는 `DateTimeTools` 같은 Java 객체를 직접 `.tools(...)`에 넣었습니다. MCP에서는 Tool이 다른 프로세스나 서버에 있으므로 Host가 그 객체를 직접 가지고 있지 않습니다.
 >
 > `ToolCallbackProvider`는 **MCP Client가 발견한 외부 Tool들을 ChatClient가 사용할 수 있는 형태로 모아 주는 연결 어댑터**라고 이해하면 됩니다.
 
@@ -865,7 +865,7 @@ FileSystemTools
 InternetSearchTools
 ```
 
-제11장의 내부 Tool을 MCP Server로 분리한 구조라고 보면 됩니다.
+`ch11-tool-calling`의 내부 Tool을 MCP Server로 분리한 구조라고 보면 됩니다.
 
 ---
 
@@ -985,7 +985,7 @@ if (!path.startsWith(rootDirectory)) {
 }
 ```
 
-제11장 `@Tool` 구현과 제12장 `@McpTool` 구현의 핵심 파일 처리 로직은 거의 같습니다. 이 비교가 MCP를 이해하는 데 도움이 됩니다.
+`ch11-tool-calling`의 `@Tool` 구현과 `ch12-*`의 `@McpTool` 구현에서 핵심 파일 처리 로직은 거의 같습니다. 이 비교가 MCP를 이해하는 데 도움이 됩니다.
 
 ---
 
@@ -1016,7 +1016,7 @@ fetch(url)
 
 ## 9.2 실제 활성 위치
 
-제11장 직접 검색 클래스는 Bean 애노테이션이 주석 상태입니다. 제12장 MCP Server의 `InternetSearchTools`는 `@Component`와 `@McpTool`이 활성화되어 있습니다.
+`ch11-tool-calling`의 직접 검색 클래스는 Bean 애노테이션이 주석 상태입니다. `ch12-*` MCP Server의 `InternetSearchTools`는 `@Component`와 `@McpTool`이 활성화되어 있습니다.
 
 현재 소스 그대로 학습할 때는 MCP Internet Search를 실제 실행 대상으로 보는 것이 맞습니다.
 
@@ -1039,7 +1039,7 @@ fetch(url)
 
 # 제11장. Annotation MCP 프로젝트는 고급 단계다
 
-## 11.0 초보자용 MCP 고급 기능 용어표
+## 11.1 초보자용 MCP 고급 기능 용어표
 
 | 용어 | 초보자용 설명 |
 |---|---|
@@ -1057,7 +1057,7 @@ fetch(url)
 >
 > 이 기능들은 Tool Calling의 기초가 아닙니다. `@Tool → @McpTool → STDIO → WebMVC MCP`가 이해된 뒤에 보는 것이 맞습니다. 이 용어들을 아직 몰라도 앞 단계 실습을 진행하는 데 문제없습니다.
 
-## 11.1 단순한 복사본이 아니다
+## 11.2 실제 프로젝트에 포함된 고급 기능
 
 `ch12-webmvc-mcp-host-annotation`은 다음 기능을 포함합니다.
 
@@ -1073,7 +1073,7 @@ fetch(url)
 
 ---
 
-## 11.2 Logging
+## 11.3 Logging
 
 Server 쪽 DateTime Tool은 `McpSyncRequestContext`로 Client에 로그를 보냅니다.
 
@@ -1088,7 +1088,7 @@ public String getCurrentDateTime(
 
 ---
 
-## 11.3 Resource와 Prompt
+## 11.4 Resource와 Prompt
 
 `McpResourceService`:
 
@@ -1111,7 +1111,7 @@ completeCompletion()
 
 ---
 
-## 11.4 고급 기능 권장 순서
+## 11.5 고급 기능 권장 순서
 
 ① Logging  
 ② Progress  
@@ -1239,7 +1239,7 @@ ch13-agent
 
 # 제14장. 실제 소스 실행 가이드
 
-## 14.0 실행 환경 용어 주해
+## 14.1 실행 환경 용어 주해
 
 > **초보자 주해 — 실행 환경**
 >
@@ -1251,7 +1251,7 @@ ch13-agent
 >
 > 오류가 발생하면 소스부터 고치지 말고 **Java 버전 → 환경변수 → Docker → 포트 → 애플리케이션 로그** 순서로 확인하는 것이 좋습니다.
 
-## 14.1 공통 환경
+## 14.2 공통 환경
 
 | 항목 | 현재 소스 |
 |---|---|
@@ -1269,7 +1269,7 @@ java -version
 
 ---
 
-## 14.2 Eclipse / STS
+## 14.3 Eclipse / STS
 
 ① `File → Import`  
 ② `Gradle → Existing Gradle Project`  
@@ -1281,7 +1281,7 @@ java -version
 
 ---
 
-## 14.3 VS Code
+## 14.4 VS Code
 
 권장 확장:
 
@@ -1305,7 +1305,7 @@ chmod +x gradlew
 
 ---
 
-## 14.4 환경변수
+## 14.5 환경변수
 
 > **초보자 주해 — 환경변수**
 >
@@ -1329,7 +1329,7 @@ export SERPAPI_API_KEY="본인의_SERPAPI_API_KEY"
 
 ---
 
-## 14.5 PostgreSQL/PGVector
+## 14.6 PostgreSQL/PGVector
 
 다음 프로젝트는 DB가 필요합니다.
 
@@ -1369,7 +1369,7 @@ docker ps
 
 ---
 
-## 14.6 제11장 실행
+## 14.7 `ch11-tool-calling` 실행
 
 ① Docker Desktop 실행  
 ② `pgvector` 실행  
@@ -1405,7 +1405,7 @@ cd projects-spring-ai-2.0/ch11-tool-calling
 
 ---
 
-## 14.7 STDIO MCP
+## 14.8 STDIO MCP
 
 먼저 네 Server를 `bootJar`로 빌드합니다.
 
@@ -1447,7 +1447,7 @@ cd projects-spring-ai-2.0/ch12-stdio-mcp-host
 
 ---
 
-## 14.8 WebMVC MCP
+## 14.9 WebMVC MCP
 
 Server:
 
@@ -1475,7 +1475,7 @@ Endpoint : /mcp
 
 ---
 
-## 14.9 WebFlux MCP
+## 14.10 WebFlux MCP
 
 WebMVC가 정상 동작한 뒤 진행합니다.
 
@@ -1499,7 +1499,7 @@ export OPENAI_API_KEY="본인의_OPENAI_API_KEY"
 
 ---
 
-## 14.10 Annotation MCP
+## 14.11 Annotation MCP
 
 기본 WebMVC MCP를 끝낸 뒤 실행합니다.
 
@@ -1523,7 +1523,7 @@ Logging → Resource → Prompt → Progress → Sampling → Elicitation → To
 
 ---
 
-## 14.11 오류 점검
+## 14.12 오류 점검
 
 ① Java 21  
 ② Gradle Wrapper  
@@ -1627,7 +1627,7 @@ ASYNC WebFlux
 
 # 부록 B. 최종 배포 시 알아둘 예외 사항
 
-- `ch11-tool-calling`의 직접 Internet Search 클래스는 Bean 애노테이션이 주석 처리되어 있어 기본 실행 대상이 아닙니다. 인터넷 검색 실습은 제12장 MCP Server 버전을 사용합니다.
+- `ch11-tool-calling`의 직접 Internet Search 클래스는 Bean 애노테이션이 주석 처리되어 있어 기본 실행 대상이 아닙니다. 인터넷 검색 실습은 `ch12-*` MCP Server 버전을 사용합니다.
 - Exception Handling의 커스텀 `ToolExecutionExceptionProcessor` Bean은 의도적으로 주석 처리되어 있어, 예외 처리 방식을 비교하며 활성화하는 실습용 코드입니다.
 - STDIO Host의 `mcp-servers.json`에는 Windows 절대 경로가 들어 있으므로 clone 위치나 운영체제가 다르면 JAR 경로를 수정해야 합니다.
 - HTTP 기반 MCP 예제는 교육용 localhost 실행을 전제로 하며, 외부 배포 시 별도의 인증·인가가 필요합니다.
@@ -1636,7 +1636,7 @@ ASYNC WebFlux
 
 ## 마무리
 
-이 저장소는 **Spring AI 기본기 → Tool Calling → MCP → Reactive/고급 MCP → Agent** 순서로 학습하도록 구성되어 있습니다. 실행 명령은 제14장에 모았고, 각 장에서는 해당 단계에서 새로 등장하는 개념과 실제 소스 차이에 집중하도록 정리했습니다.
+이 저장소는 **Spring AI 기본기 → Tool Calling → MCP → Reactive/고급 MCP → Agent** 순서로 학습하도록 구성되어 있습니다. 실행 명령은 제14장에 한곳으로 모았고, 앞 장에서는 같은 명령을 반복하지 않고 개념과 실제 소스 차이에 집중했습니다.
 
 ---
 
